@@ -246,9 +246,12 @@ def run_engine():
             last_tokens = usage.get("totalTokenCount", 0)
             total_tokens += last_tokens
             
-            # Sisa Request (Estimasi RPD 1500)
-            remaining_rpd = max(0, 1500 - total_requests)
-            stats_msg = f" [Req:{total_requests} (Sisa:~{remaining_rpd}) | Tokens:{total_tokens}]"
+            # Stats Display
+            if config.AI_MODE == "CLOUD":
+                remaining_rpd = max(0, 1500 - total_requests)
+                stats_msg = f" [Req:{total_requests} (Sisa:~{remaining_rpd}) | Tokens:{total_tokens}]"
+            else:
+                stats_msg = f" [Total:{total_requests}]"
 
             try:
                 resp = json.loads(res_ai.get('response', '{}'))
