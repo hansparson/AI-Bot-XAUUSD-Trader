@@ -4,6 +4,7 @@ import urllib.request
 import xml.etree.ElementTree as ET
 import MetaTrader5 as mt5
 import config
+from datetime import datetime, time
 
 def calculate_ema(prices, period):
     """Menghitung Exponential Moving Average (EMA)"""
@@ -184,3 +185,35 @@ def close_positions_by_type(symbol, target_type):
                     "type_time": mt5.ORDER_TIME_GTC, "type_filling": mt5.ORDER_FILLING_IOC,
                 }
                 mt5.order_send(request)
+
+def get_market_session():
+    """Mendeteksi sesi pasar (GMT+0 / UTC)"""
+    # MT5 Server time usually follows specific offsets, but let's use UTC for logic
+    now_utc = datetime.utcnow().time()
+    
+    if time(0, 0) <= now_utc < time(8, 0):
+        return "ASIA (Tokyo/Sydney)"
+    elif time(8, 0) <= now_utc < time(13, 0):
+        return "LONDON (Europe)"
+    elif time(13, 0) <= now_utc < time(21, 0):
+        return "NEW YORK (US)"
+    else:
+        return "GAP (Late US/Early Asia)"
+
+def get_daily_pnl():
+    """Menghitung total profit/loss hari ini dari riwayat trading MT5"""
+    now = datetime.now()
+    today_start = datetime(now.year, now.month, now.day)
+    
+    # Ambil deals dari awal hari ini
+    history_deals = mt5.history_deals_get(today_start, now)
+    if history_deals is None:
+        return 0.0
+        
+    total_pnl = 0.0
+    for deal in history_deals:
+        # Filter deal entry: deal.entry=1 (OUT) atau deal.entry=0 (IN, tapi IN tidak ada profit)
+        if deal.entry == mt5.DEAL_ENTRY_OUT:
+            total_pnl += (deal.profit + deal.commission + deal.swap + deal.fee)
+            
+    return round(total_pnl, 2)

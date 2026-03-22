@@ -7,7 +7,7 @@ import config
 from utils.helpers import (
     calculate_ema, calculate_rsi, fetch_latest_gold_news, fetch_high_impact_news,
     get_mtf_trends, get_filling_mode, get_account_risk, ask_ai, close_positions_by_type,
-    is_market_open
+    is_market_open, get_market_session, get_daily_pnl
 )
 
 # ================= KONFIGURASI ENGINE =================
@@ -95,6 +95,61 @@ def update_long_term_insights():
         conn.close()
     except Exception as e: print(f"⚠️ Gagal update insight DB: {e}")
 
+def manage_trailing_stop():
+    """Mengelola Trailing Stop dan Break-Even untuk posisi terbuka"""
+    positions = mt5.positions_get(symbol=SYMBOL)
+    if not positions:
+        return
+
+    point = mt5.symbol_info(SYMBOL).point
+    for pos in positions:
+        current_price = mt5.symbol_info_tick(SYMBOL).bid if pos.type == mt5.POSITION_TYPE_BUY else mt5.symbol_info_tick(SYMBOL).ask
+        
+        # Hitung Profit dalam Pips
+        if pos.type == mt5.POSITION_TYPE_BUY:
+            profit_pips = (current_price - pos.price_open) / point
+        else:
+            profit_pips = (pos.price_open - current_price) / point
+
+        # 1. Logic Break-Even
+        if profit_pips >= config.BREAK_EVEN_PIPS:
+            # Jika SL belum di atas/di bawah harga open (tergantung tipe)
+            new_sl = 0.0
+            if pos.type == mt5.POSITION_TYPE_BUY:
+                if pos.sl < pos.price_open:
+                    new_sl = pos.price_open + (10 * point) # BE + 10 pips buffer
+            else:
+                if pos.sl > pos.price_open or pos.sl == 0:
+                    new_sl = pos.price_open - (10 * point)
+
+            if new_sl > 0:
+                print(f"🛡️ BREAK-EVEN: Menggeser SL ke BE (+10) untuk tiket {pos.ticket}")
+                request = {
+                    "action": mt5.TRADE_ACTION_SLTP, "symbol": SYMBOL, "position": pos.ticket,
+                    "sl": new_sl, "tp": pos.tp, "type_time": mt5.ORDER_TIME_GTC, "type_filling": mt5.ORDER_FILLING_IOC,
+                }
+                mt5.order_send(request)
+
+        # 2. Logic Trailing Stop
+        if profit_pips >= config.TRAILING_STOP_PIPS + 100: # Mulai geser setelah profit > TS + buffer
+            new_sl = 0.0
+            if pos.type == mt5.POSITION_TYPE_BUY:
+                potential_sl = current_price - (config.TRAILING_STOP_PIPS * point)
+                if potential_sl > pos.sl:
+                    new_sl = potential_sl
+            else:
+                potential_sl = current_price + (config.TRAILING_STOP_PIPS * point)
+                if potential_sl < pos.sl or pos.sl == 0:
+                    new_sl = potential_sl
+
+            if new_sl > 0:
+                print(f"📈 TRAILING: Menggeser SL ke {new_sl} untuk tiket {pos.ticket}")
+                request = {
+                    "action": mt5.TRADE_ACTION_SLTP, "symbol": SYMBOL, "position": pos.ticket,
+                    "sl": new_sl, "tp": pos.tp, "type_time": mt5.ORDER_TIME_GTC, "type_filling": mt5.ORDER_FILLING_IOC,
+                }
+                mt5.order_send(request)
+
 def run_engine():
     if not mt5.initialize(login=config.MT5_LOGIN, password=config.MT5_PASSWORD, server=config.MT5_SERVER):
         print(f"❌ MT5 Gagal Konek ke {config.MT5_SERVER}.")
@@ -111,6 +166,15 @@ def run_engine():
 
     try:
         while True:
+            # 1. DAILY DRAWDOWN GUARD
+            daily_pnl = get_daily_pnl()
+            if daily_pnl <= config.MAX_DAILY_LOSS_USD:
+                print(f"🚨 KILL SWITCH AKTIF: Rugi harian ${daily_pnl} mencapai batas ${config.MAX_DAILY_LOSS_USD}. Berhenti hari ini.")
+                # Tutup semua posisi jika ada
+                close_positions_by_type(SYMBOL, mt5.POSITION_TYPE_BUY)
+                close_positions_by_type(SYMBOL, mt5.POSITION_TYPE_SELL)
+                time.sleep(3600); continue # Tunggu 1 jam sebelum cek lagi
+
             if not is_market_open(SYMBOL):
                 print(f"💤 PASAR TUTUP: {SYMBOL} sedang tidak aktif. Menunggu 5 menit...")
                 time.sleep(300); continue
@@ -130,6 +194,9 @@ def run_engine():
             positions = mt5.positions_get(symbol=SYMBOL)
             total_profit = sum(pos.profit for pos in positions) if positions else 0.0
             
+            # 2. MANAGE TRAILING STOP
+            if positions:
+                manage_trailing_stop()
             # Tracking Loss Berturut-turut
             curr_pos_count = len(positions) if positions else 0
             if last_position_count > 0 and curr_pos_count == 0:
@@ -154,13 +221,14 @@ def run_engine():
 
             # RAKIT PROMPT (Optimized for Tokens)
             mtf = get_mtf_trends(SYMBOL)
+            session = get_market_session()
             history_text = "\n".join([f"{h['type']}:{h['result']}" for h in load_trade_history()[-5:]])
             news_txt = fetch_latest_gold_news()[:200]
             high_txt = fetch_high_impact_news()[:150]
             
             prompt = (
-                f"GOLD_{SYMBOL}_M1\n"
-                f"P:{current_price} | R:{rsi} | T:{trend}\n"
+                f"GOLD_{SYMBOL}_M1 | Session:{session}\n"
+                f"P:{current_price} | R:{rsi} | T:{trend} | DailyPnL:${daily_pnl}\n"
                 f"M15:{mtf.get('M15')} | H1:{mtf.get('H1')}\n"
                 f"News:{news_txt}\n{high_txt}\n"
                 f"Hist:{history_text}\n"

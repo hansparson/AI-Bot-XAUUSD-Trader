@@ -35,6 +35,11 @@ DEFAULT_LOT = float(os.getenv("DEFAULT_LOT", 0.01))
 # Database
 DB_FILE = os.getenv("DB_FILE", "data/trading_data.db")
 
+# Risk Management
+MAX_DAILY_LOSS_USD = float(os.getenv("MAX_DAILY_LOSS_USD", -50.0)) # Stop if daily loss hits -$50
+TRAILING_STOP_PIPS = int(os.getenv("TRAILING_STOP_PIPS", 250)) # Follow profit by 250 pips
+BREAK_EVEN_PIPS = int(os.getenv("BREAK_EVEN_PIPS", 300)) # Move to BE after 300 pips profit
+
 # AI Model & Mode
 AI_MODE = os.getenv("AI_MODE", "LOCAL").upper() # LOCAL atau CLOUD
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
