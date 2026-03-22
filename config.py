@@ -52,7 +52,8 @@ TRAILING_STOP_PIPS = int(os.getenv("TRAILING_STOP_PIPS", 250)) # Follow profit b
 BREAK_EVEN_PIPS = int(os.getenv("BREAK_EVEN_PIPS", 300)) # Move to BE after 300 pips profit
 
 # AI Model & Mode
-AI_MODE = os.getenv("AI_MODE", "LOCAL").upper() # LOCAL atau CLOUD
+AI_MODE = os.getenv("AI_MODE", "CLOUD").upper() # LOCAL atau CLOUD
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-AI_MODEL = os.getenv("AI_MODEL", "qwen2.5:7b")
+CLOUD_MODEL = os.getenv("CLOUD_MODEL", "gemini-1.5-flash")
+LOCAL_MODEL = os.getenv("LOCAL_MODEL", "qwen2.5:7b")
 AI_URL = os.getenv("AI_URL", "http://127.0.0.1:11434/api/generate")

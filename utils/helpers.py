@@ -151,7 +151,7 @@ def is_market_open(symbol):
 def ask_ai(prompt_text):
     """Fungsi AI Hybrid: Bisa Lokal (Ollama) atau Cloud (Gemini)"""
     if config.AI_MODE == "CLOUD":
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key={config.GEMINI_API_KEY}"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{config.CLOUD_MODEL}:generateContent?key={config.GEMINI_API_KEY}"
         payload = {
             "contents": [{"parts": [{"text": prompt_text}]}],
             "generationConfig": {
@@ -173,7 +173,7 @@ def ask_ai(prompt_text):
     else:
         url = config.AI_URL
         payload = {
-            "model": config.AI_MODEL, "prompt": prompt_text, "stream": False,
+            "model": config.LOCAL_MODEL, "prompt": prompt_text, "stream": False,
             "options": {"temperature": 0.2, "num_predict": 250}, "format": "json"
         }
         try:
