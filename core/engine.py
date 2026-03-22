@@ -222,7 +222,7 @@ def run_engine():
             # RAKIT PROMPT (Optimized for Tokens)
             mtf = get_mtf_trends(SYMBOL)
             session = get_market_session()
-            history_text = "\n".join([f"{h['type']}:{h['result']}" for h in load_trade_history()[-5:]])
+            history_text = "\n".join([f"{h['type']}:{h['result']}" for h in load_trade_history()[-15:]])
             news_txt = fetch_latest_gold_news()[:200]
             high_txt = fetch_high_impact_news()[:150]
             
