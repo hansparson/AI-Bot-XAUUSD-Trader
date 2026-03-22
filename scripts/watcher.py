@@ -39,8 +39,14 @@ def monitor_market():
                         )
                         res = ask_ai(prompt)
                         if res:
-                            alert_txt = res.get('response', '...')
-                            print(f"🧠 AI ALERT: \"{alert_txt}\"")
+                            alert_txt = res.get('response', '').strip()
+                            # Bersihkan jika AI memberikan format JSON mentah atau banyak baris baru
+                            alert_txt = alert_txt.replace("\n", " ").replace("\r", " ")
+                            if ":" in alert_txt and "{" in alert_txt:
+                                # Jika terlihat seperti JSON, coba ambil bagian pesannya saja
+                                alert_txt = alert_txt.split(":")[-1].strip().replace("{", "").replace("}", "").replace('"', '')
+                            
+                            print(f"🧠 AI ALERT: \"{alert_txt[:200]}\"")
                             print("-" * 50)
 
             time.sleep(60)
