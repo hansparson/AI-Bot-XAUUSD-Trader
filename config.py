@@ -32,6 +32,17 @@ SYMBOL = os.getenv("SYMBOL", "XAUUSD.m")
 MAGIC_NUMBER = int(os.getenv("MAGIC_NUMBER", 123456))
 DEFAULT_LOT = float(os.getenv("DEFAULT_LOT", 0.01))
 
+# Engine Logic
+RATING_THRESHOLD = float(os.getenv("RATING_THRESHOLD", 0.70))
+STOP_LOSS_PIPS = int(os.getenv("STOP_LOSS_PIPS", 800))
+TAKE_PROFIT_PIPS = int(os.getenv("TAKE_PROFIT_PIPS", 800))
+COOLDOWN_SECONDS = int(os.getenv("COOLDOWN_SECONDS", 60))
+MAX_TRADES = int(os.getenv("MAX_TRADES", 1))
+MIN_MARGIN_LEVEL = float(os.getenv("MIN_MARGIN_LEVEL", 300.0))
+HARD_TP_USD = float(os.getenv("HARD_TP_USD", 15.0))
+EMERGENCY_SL_USD = float(os.getenv("EMERGENCY_SL_USD", -8.0))
+MAX_CONSEC_LOSSES = int(os.getenv("MAX_CONSEC_LOSSES", 4))
+
 # Database
 DB_FILE = os.getenv("DB_FILE", "data/trading_data.db")
 
