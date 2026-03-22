@@ -233,7 +233,8 @@ def run_engine():
                 f"News:{news_txt}\n{high_txt}\n"
                 f"Hist:{history_text}\n"
                 f"Ref:{load_long_term_insights()[:200]}\n"
-                f"Output JSON: decision(BUY/SELL/HOLD/CLOSE), confidence(0-1), reason, sl_pips, tp_pips"
+                f"Output JSON: decision(BUY/SELL/HOLD/CLOSE), confidence(0-1), reason, sl_pips, tp_pips\n"
+                f"(Baseline: SL={STOP_LOSS_PIPS}, TP={TAKE_PROFIT_PIPS} pips. 100 pips = $1.00 Gold movement)"
             )
 
             print(f"🧠 Meminta Analisa AI ({config.AI_MODE})...", end="", flush=True)
@@ -275,8 +276,12 @@ def run_engine():
                         
                         price = mt5.symbol_info_tick(SYMBOL).ask if decision == "BUY" else mt5.symbol_info_tick(SYMBOL).bid
                         point = mt5.symbol_info(SYMBOL).point
-                        ai_sl = max(300, min(int(resp.get("sl_pips", STOP_LOSS_PIPS)), 3000))
-                        ai_tp = max(300, min(int(resp.get("tp_pips", TAKE_PROFIT_PIPS)), 6000))
+                        # Gunakan default jika AI tidak memberikan respons valid
+                        raw_sl = resp.get("sl_pips")
+                        raw_tp = resp.get("tp_pips")
+                        ai_sl = max(100, min(int(raw_sl if raw_sl else STOP_LOSS_PIPS), 3000))
+                        ai_tp = max(100, min(int(raw_tp if raw_tp else TAKE_PROFIT_PIPS), 6000))
+                        
                         sl = price - ai_sl * point if decision == "BUY" else price + ai_sl * point
                         tp = price + ai_tp * point if decision == "BUY" else price - ai_tp * point
                         
