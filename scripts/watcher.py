@@ -40,12 +40,26 @@ def monitor_market():
                         res = ask_ai(prompt)
                         if res:
                             alert_txt = res.get('response', '').strip()
-                            # Bersihkan jika AI memberikan format JSON mentah atau banyak baris baru
-                            alert_txt = alert_txt.replace("\n", " ").replace("\r", " ")
-                            if ":" in alert_txt and "{" in alert_txt:
-                                # Jika terlihat seperti JSON, coba ambil bagian pesannya saja
-                                alert_txt = alert_txt.split(":")[-1].strip().replace("{", "").replace("}", "").replace('"', '')
+                            # 1. Cek apakah ini format JSON
+                            try:
+                                if "{" in alert_txt:
+                                    # Cari blok JSON pertama
+                                    start = alert_txt.find("{")
+                                    end = alert_txt.rfind("}") + 1
+                                    json_str = alert_txt[start:end]
+                                    data = json.loads(json_str)
+                                    # Ambil value apapun yang ada (biasanya prompt minta 1 kalimat)
+                                    alert_txt = list(data.values())[0] if isinstance(data, dict) else alert_txt
+                            except: pass
+
+                            # 2. Pembersihan karakter pengganggu (newline, quotes berlebih)
+                            alert_txt = alert_txt.replace("\n", " ").replace("\r", " ").strip()
+                            alert_txt = alert_txt.replace('"', '').replace('{', '').replace('}', '').strip()
                             
+                            # Jika masih kosong, gunakan original response (tapi strip newline)
+                            if not alert_txt:
+                                alert_txt = res.get('response', '').replace("\n", " ").strip()
+
                             print(f"🧠 AI ALERT: \"{alert_txt[:200]}\"")
                             print("-" * 50)
 
