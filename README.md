@@ -40,8 +40,11 @@ Automated AI-driven trading bot for XAUUSD (Gold) integrated with MetaTrader 5.
     ```
 
 4.  **Run the Bot**:
-    - Build the database: `python scripts/db_setup.py`
-    - Start the engine: `python main.py`
+    - **Cara Mudah (1-Click)**: Cukup klik ganda file `1_CLICK_RUN.bat` untuk menjalankan Engine dan Watcher sekaligus di jendela terpisah.
+    - **Cara Manual**: 
+        - Build the database: `python scripts/db_setup.py`
+        - Start the engine: `python main.py` (atau `RUN_ENGINE.bat`)
+        - Start the watcher: `python -m scripts.watcher` (atau `RUN_WATCHER.bat`)
 
 ## 📊 Project Structure
 
