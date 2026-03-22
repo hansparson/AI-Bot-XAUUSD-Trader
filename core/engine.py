@@ -289,6 +289,7 @@ def run_engine():
                         }
                         result = mt5.order_send(req)
                         if result.retcode == mt5.TRADE_RETCODE_DONE:
+                            print(f"💰 TRADE BERHASIL: {decision} {LOT_SIZE} {SYMBOL} @{price:.2f} (SL:{sl:.2f} TP:{tp:.2f})")
                             save_to_history(result.order, decision, price, "OPENED", reason)
                             consecutive_losses = 0
             except Exception as e: print(f"❌ Parse Error: {e}")
