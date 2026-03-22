@@ -23,22 +23,25 @@ def monitor_market():
 
                 if ema9 and ema21:
                     diff = abs(ema9 - ema21)
+                    trend_icon = "📈 UP" if ema9 > ema21 else "📉 DOWN"
+                    now = time.strftime("%H:%M:%S")
+                    print(f"[{now}] Price: {curr_price:.2f} | EMA9: {ema9:.2f} | EMA21: {ema21:.2f} | Trend: {trend_icon}")
+
                     if diff >= threshold:
-                        print(f"🚨 MOMENTUM DETECTED: Diff {diff:.2f}")
-                        
-                        # ALARM MENGGUNAKAN AI (PENGGANTI OPENCLAW AGENT)
+                        print(f"🚨 MOMENTUM! Diff: {diff:.2f}")
                         news = fetch_latest_gold_news()
                         high_impact = fetch_high_impact_news()
                         prompt = (
                             f"URGENT: Momentum Gold {config.SYMBOL} terdeteksi.\n"
-                            f"Price: {curr_price} | EMA Diff: {diff:.2f}\n"
+                            f"Price: {curr_price} | Trend: {trend_icon} | EMA Diff: {diff:.2f}\n"
                             f"News: {news}\n{high_impact}\n"
-                            f"Berikan peringatan singkat 1 kalimat sebagai AI Assistant."
+                            f"Berikan peringatan singkat 1 kalimat sebagai AI Assistant Profesional."
                         )
                         res = ask_ai(prompt)
                         if res:
-                            # In a real app we could use system notification, here we just print
-                            print(f"🧠 AI ALERT: {res.get('response', '...')}")
+                            alert_txt = res.get('response', '...')
+                            print(f"🧠 AI ALERT: \"{alert_txt}\"")
+                            print("-" * 50)
 
             time.sleep(60)
     except KeyboardInterrupt: print("Watcher Stopped.")
