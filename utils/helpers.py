@@ -121,12 +121,32 @@ def get_account_risk(min_margin_level=300.0):
     return None
 
 def is_market_open(symbol):
-    """Mengecek apakah pasar sedang buka (Live) atau tutup"""
+    """Mengecek apakah pasar sedang buka (Live) atau tutup via status broker & kesegaran harga"""
     info = mt5.symbol_info(symbol)
     if info is None:
         return False
+        
+    # 1. Cek Mode Trading (Harus FULL)
     # trade_mode: 0=disabled, 1=long only, 2=short only, 3=close only, 4=full
-    return info.trade_mode == mt5.SYMBOL_TRADE_MODE_FULL
+    is_active = info.trade_mode == mt5.SYMBOL_TRADE_MODE_FULL
+    
+    # 2. Cek Kesegaran Harga (Timestamp)
+    # Jika harga terakhir sudah lebih dari 10 menit (600 detik) yang lalu, pasar dianggap offline
+    # Kita menggunakan mt5.symbol_info_tick untuk mendapatkan waktu tick terakhir
+    tick = mt5.symbol_info_tick(symbol)
+    if tick:
+        # Kita bandingkan waktu sekarang (GMT) vs waktu tick (GMT Server)
+        # Note: Ini mengasumsikan PC User punya jam yang sinkron
+        import time
+        current_time = int(time.time())
+        # Kita beri toleransi offset server vs local (misal server GMT+2, local GMT+7 -> selisih 18000s)
+        # Namun pendekatan paling aman: Jika harga tidak berubah > 20 menit, anggap tutup.
+        # Karena Gold tutup 1 jam tiap hari, 20 menit cukup aman.
+        if (current_time - tick.time) > 43200: # 12 Jam (Safe threshold for weekend/market close)
+            # Selisih besar biasanya karena weekend
+            return False
+
+    return is_active
 
 def ask_ai(prompt_text):
     """Fungsi AI Hybrid: Bisa Lokal (Ollama) atau Cloud (Gemini)"""
