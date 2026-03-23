@@ -292,43 +292,47 @@ def run_engine():
             # A. Detect Crossover (The Trigger)
             if ema20 and ema50:
                 new_signal = "HOLD"
-                if ema20 > ema50 and rsi < 75:
+                technical_score = 0.5
+                
+                if ema20 > ema50 and rsi < 80:
+                    new_signal = "BUY"
+                    # Soft Filter EMA200
                     if not PRO_MODE or (ema200 and current_price > ema200):
-                        new_signal = "BUY"
+                        technical_score = 0.9
                     else:
-                        if loop_count % 6 == 0: print(f"⏳ SIGNAL: BUY potential, but filtered by EMA200 ({current_price:.2f} < {ema200:.2f})")
-                elif ema20 < ema50 and rsi > 25:
+                        technical_score = 0.6 # Aggressive: allow even below EMA200 with penalty
+                elif ema20 < ema50 and rsi > 20:
+                    new_signal = "SELL"
+                    # Soft Filter EMA200
                     if not PRO_MODE or (ema200 and current_price < ema200):
-                        new_signal = "SELL"
+                        technical_score = 0.9
                     else:
-                        if loop_count % 6 == 0: print(f"⏳ SIGNAL: SELL potential, but filtered by EMA200 ({current_price:.2f} > {ema200:.2f})")
+                        technical_score = 0.6 # Aggressive
                 
                 if new_signal == "HOLD" and loop_count % 12 == 0:
                     print(f"👀 MONITORING: Price:{current_price:.2f} | EMA20:{ema20:.2f} | EMA50:{ema50:.2f} | Trend:{'UP' if ema20 > ema50 else 'DOWN'}")
                 
                 # State Machine for Pullback
                 if new_signal != "HOLD" and pending_signal == "HOLD":
-                    print(f"📡 TRIGGER: {new_signal} detected. Waiting for pullback to EMA...")
+                    print(f"📡 TRIGGER: {new_signal} detected. Waiting for pullback (Proximity)...")
                     pending_signal = new_signal
                     pullback_ready = False
                 elif new_signal == "HOLD" and pending_signal != "HOLD":
-                    # Cek apakah sinyal masih valid secara teknis (untuk membatalkan pending jika crossover berbalik)
                     pass 
 
-            # B. Check for Pullback (Price touching EMA)
+            # B. Check for Pullback (Proximity EMA)
             if pending_signal != "HOLD" and not pullback_ready:
-                if loop_count % 12 == 0:
-                    print(f"⏳ PENDING: {pending_signal} trigger aktif. Menunggu harga menyentuh EMA20 ({ema20:.2f}) untuk konfirmasi...")
+                atr = calculate_atr(rates, 14) or 0.5
+                # Proximity: Harga masuk dalam range ATR dari EMA (Looser than touch)
+                proximity = atr * 0.5
                 
-                # Jika BUY, cari harga Low <= EMA20
-                # Jika SELL, cari harga High >= EMA20
                 last_candle = rates[-1]
-                if pending_signal == "BUY" and last_candle['low'] <= ema20:
+                if pending_signal == "BUY" and last_candle['low'] <= (ema20 + proximity):
                     pullback_ready = True
-                    print(f"🔄 PULLBACK: Price touched EMA20. Checking for Rejection...")
-                elif pending_signal == "SELL" and last_candle['high'] >= ema20:
+                    print(f"🔄 PROXIMITY: Price entered EMA20 zone. Confirming...")
+                elif pending_signal == "SELL" and last_candle['high'] >= (ema20 - proximity):
                     pullback_ready = True
-                    print(f"🔄 PULLBACK: Price touched EMA20. Checking for Rejection...")
+                    print(f"🔄 PROXIMITY: Price entered EMA20 zone. Confirming...")
 
             # 6. EXECUTION GUARDS (Institutional)
             can_execute = False
@@ -390,20 +394,17 @@ def run_engine():
                 else:
                     # FALLBACK LOGIC: Gemini Down / Quota Exceeded
                     print(" (Cloud Down! Switching to Local-Heavy weight) ", end="")
-                    # Redistribusikan bobot Gemini ke Tech & Ollama
-                    score_gemini = 0.5 # Default middle ground 
-                    # Kita ganti formula di bawah untuk mengabaikan bobot Gemini
+                    score_gemini = 0.5 
                 
+                # Formula Final Score (Institutional aggregate)
                 if not res_gemini:
-                    # Formula Fallback (Tech: 0.6, Ollama: 0.4)
                     final_score = (technical_score * 0.6) + (score_ollama * 0.4)
                 else:
-                    # Formula Normal
                     final_score = (technical_score * WEIGHT_TECH) + (score_ollama * WEIGHT_OLLAMA) + (score_gemini * WEIGHT_GEMINI)
                 
-                print(f" [Tech:{technical_score} | O:{score_ollama} | G:{score_gemini}] -> Final: {final_score:.2f}")
+                print(f" [Tech:{technical_score:.1f} | O:{score_ollama:.1f} | G:{score_gemini:.1f}] -> Final: {final_score:.2f}")
 
-                if final_score >= 0.75:
+                if final_score >= RATING_THRESHOLD:
                     # 8. ADAPTIVE POSITION SIZING
                     dd = get_equity_drawdown()
                     risk_mult = 1.0
