@@ -331,6 +331,7 @@ def run_engine():
             if pending_signal != "HOLD" and not pullback_ready:
                 atr = calculate_atr(rates, 14) or 0.5
                 proximity = atr * 0.4 
+                dist = abs(current_price - ema20) if ema20 else 0
                 
                 last_candle = rates[-1]
                 if pending_signal == "BUY" and last_candle['low'] <= (ema20 + proximity):
@@ -339,6 +340,12 @@ def run_engine():
                 elif pending_signal == "SELL" and last_candle['high'] >= (ema20 - proximity):
                     pullback_ready = True
                     print(f"🔄 PULLBACK: Price touched/near EMA20. Confirming...")
+                
+                # --- NEW: Catch the Train (Direct Breakout) ---
+                # Jika harga lari terlalu kencang (> 2.5x ATR) tanpa pullback, paksa entry
+                if dist > (atr * 2.5):
+                    print(f"🚀 CHASE: Trend terlalu kencang (Dist:{dist:.2f}). Menghentikan penantian pullback.")
+                    pullback_ready = True # Paksa ke tahap eksekusi
 
             # 6. EXECUTION GUARDS (Institutional)
             can_execute = False
