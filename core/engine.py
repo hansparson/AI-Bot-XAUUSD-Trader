@@ -224,10 +224,14 @@ def run_engine():
             # A. Drawdown & Daily PnL
             daily_pnl = get_daily_pnl()
             if daily_pnl <= config.MAX_DAILY_LOSS_USD:
-                print(f"🚨 KILL SWITCH: Daily Loss Limit Hit (${daily_pnl}). Pausing...")
-                close_positions_by_type(SYMBOL, mt5.POSITION_TYPE_BUY)
-                close_positions_by_type(SYMBOL, mt5.POSITION_TYPE_SELL)
-                time.sleep(3600); continue
+                if config.ACCOUNT_MODE == "DEMO":
+                    if loop_count % 12 == 0:
+                        print(f"⚠️ RISK: Daily Loss Limit Hit (${daily_pnl}), but continuing because of DEMO MODE.")
+                else:
+                    print(f"🚨 KILL SWITCH: Daily Loss Limit Hit (${daily_pnl}). Pausing...")
+                    close_positions_by_type(SYMBOL, mt5.POSITION_TYPE_BUY)
+                    close_positions_by_type(SYMBOL, mt5.POSITION_TYPE_SELL)
+                    time.sleep(3600); continue
 
             # B. Equity Curve Health (3-day sequential loss)
             if not is_equity_curve_healthy():
