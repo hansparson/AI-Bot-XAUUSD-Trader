@@ -381,33 +381,37 @@ def run_engine():
                     f"JSON: score(0-1), reason"
                 )
 
-                print(f"🧠 ENSEMBLE AI Validating {pending_signal}...", end="", flush=True)
-                
-                # Weighted Scoring
+                # Weighted Scoring (Ensemble or Local)
                 score_ollama = 0.5
                 score_gemini = 0.5
+                final_score = 0.0
                 
+                # Selalu panggil Ollama (Local)
                 res_ollama = ask_ai(prompt, mode_override="LOCAL")
                 if res_ollama:
                     try: score_ollama = json.loads(res_ollama.get('response', '{}')).get('score', 0.5)
                     except: pass
                 
-                res_gemini = ask_ai(prompt, mode_override="CLOUD")
-                if res_gemini:
-                    try: score_gemini = json.loads(res_gemini.get('response', '{}')).get('score', 0.5)
-                    except: pass
+                if ENSEMBLE_AI:
+                    print(f"🧠 ENSEMBLE AI Validating {pending_signal}...", end="", flush=True)
+                    res_gemini = ask_ai(prompt, mode_override="CLOUD")
+                    if res_gemini:
+                        try: score_gemini = json.loads(res_gemini.get('response', '{}')).get('score', 0.5)
+                        except: pass
+                    else:
+                        print(" (Gemini Error! Fallback to local-heavy) ", end="")
+                        score_gemini = 0.5
+                    
+                    if not res_gemini:
+                        final_score = (technical_score * 0.6) + (score_ollama * 0.4)
+                    else:
+                        final_score = (technical_score * WEIGHT_TECH) + (score_ollama * WEIGHT_OLLAMA) + (score_gemini * WEIGHT_GEMINI)
                 else:
-                    # FALLBACK LOGIC: Gemini Down / Quota Exceeded
-                    print(" (Cloud Down! Switching to Local-Heavy weight) ", end="")
-                    score_gemini = 0.5 
+                    # PURE LOCAL MODE (50% Tech, 50% Ollama)
+                    print(f"🧠 LOCAL AI Validating {pending_signal}...", end="", flush=True)
+                    final_score = (technical_score * 0.5) + (score_ollama * 0.5)
                 
-                # Formula Final Score (Institutional aggregate)
-                if not res_gemini:
-                    final_score = (technical_score * 0.6) + (score_ollama * 0.4)
-                else:
-                    final_score = (technical_score * WEIGHT_TECH) + (score_ollama * WEIGHT_OLLAMA) + (score_gemini * WEIGHT_GEMINI)
-                
-                print(f" [Tech:{technical_score:.1f} | O:{score_ollama:.1f} | G:{score_gemini:.1f}] -> Final: {final_score:.2f}")
+                print(f" [Tech:{technical_score:.1f} | O:{score_ollama:.1f}] -> Final: {final_score:.2f}")
 
                 # MEGA-LOOSE: Jika skor AI tinggi, kita anggap konfirmasi terpenuhi
                 if final_score >= RATING_THRESHOLD:
