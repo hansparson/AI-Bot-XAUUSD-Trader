@@ -210,6 +210,12 @@ def run_engine():
         while True:
             # 0. HEARTBEAT (Status monitoring)
             loop_count += 1
+            
+            # Diagnostic Awal (Immediate)
+            if loop_count == 1 or loop_count % 10 == 0:
+                acc = mt5.account_info()
+                print(f"🔍 Monitoring [{SYMBOL}]: Price:{mt5.symbol_info_tick(SYMBOL).bid if mt5.symbol_info_tick(SYMBOL) else 0} | Equity:${acc.equity if acc else 0}")
+
             if loop_count >= 60: # Sinyal status setiap ~10 menit (60 * 10s)
                 print(f"💓 HEARTBEAT | Pnl: ${daily_pnl} | Regime: {regime} | Pos: {curr_pos_count} | Spr: {get_spread(SYMBOL)}")
                 loop_count = 0
