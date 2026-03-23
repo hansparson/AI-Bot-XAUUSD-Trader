@@ -289,21 +289,31 @@ def run_engine():
                 if ema20 > ema50 and rsi < 75:
                     if not PRO_MODE or (ema200 and current_price > ema200):
                         new_signal = "BUY"
+                    else:
+                        if loop_count % 6 == 0: print(f"⏳ SIGNAL: BUY potential, but filtered by EMA200 ({current_price:.2f} < {ema200:.2f})")
                 elif ema20 < ema50 and rsi > 25:
                     if not PRO_MODE or (ema200 and current_price < ema200):
                         new_signal = "SELL"
+                    else:
+                        if loop_count % 6 == 0: print(f"⏳ SIGNAL: SELL potential, but filtered by EMA200 ({current_price:.2f} > {ema200:.2f})")
+                
+                if new_signal == "HOLD" and loop_count % 12 == 0:
+                    print(f"👀 MONITORING: Price:{current_price:.2f} | EMA20:{ema20:.2f} | EMA50:{ema50:.2f} | Trend:{'UP' if ema20 > ema50 else 'DOWN'}")
                 
                 # State Machine for Pullback
                 if new_signal != "HOLD" and pending_signal == "HOLD":
                     print(f"📡 TRIGGER: {new_signal} detected. Waiting for pullback to EMA...")
                     pending_signal = new_signal
                     pullback_ready = False
-                elif new_signal == "HOLD":
-                    pending_signal = "HOLD"
-                    pullback_ready = False
+                elif new_signal == "HOLD" and pending_signal != "HOLD":
+                    # Cek apakah sinyal masih valid secara teknis (untuk membatalkan pending jika crossover berbalik)
+                    pass 
 
             # B. Check for Pullback (Price touching EMA)
             if pending_signal != "HOLD" and not pullback_ready:
+                if loop_count % 12 == 0:
+                    print(f"⏳ PENDING: {pending_signal} trigger aktif. Menunggu harga menyentuh EMA20 ({ema20:.2f}) untuk konfirmasi...")
+                
                 # Jika BUY, cari harga Low <= EMA20
                 # Jika SELL, cari harga High >= EMA20
                 last_candle = rates[-1]
