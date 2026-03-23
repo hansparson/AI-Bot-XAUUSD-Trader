@@ -298,20 +298,20 @@ def run_engine():
                 new_signal = "HOLD"
                 technical_score = 0.5
                 
-                if ema20 > ema50 and rsi < 78:
+                if ema20 > ema50 and rsi < 85:
                     new_signal = "BUY"
-                    # Soft Filter EMA200 (Special Ops: allow with penalty)
+                    # Scalper: Mild penalty for counter-trend
                     if not PRO_MODE or (ema200 and current_price > ema200):
                         technical_score = 0.9
                     else:
-                        technical_score = 0.65 # Penalty if against long-term trend
-                elif ema20 < ema50 and rsi > 22:
+                        technical_score = 0.7 # Scalping penalty
+                elif ema20 < ema50 and rsi > 15:
                     new_signal = "SELL"
-                    # Soft Filter EMA200 (Special Ops: allow with penalty)
+                    # Scalper: Mild penalty for counter-trend
                     if not PRO_MODE or (ema200 and current_price < ema200):
                         technical_score = 0.9
                     else:
-                        technical_score = 0.65 
+                        technical_score = 0.7 
                 
                 if new_signal == "HOLD" and loop_count % 12 == 0:
                     print(f"👀 MONITORING: Price:{current_price:.2f} | EMA20:{ema20:.2f} | EMA50:{ema50:.2f} | Trend:{'UP' if ema20 > ema50 else 'DOWN'}")
@@ -327,25 +327,18 @@ def run_engine():
                     if (loop_count - pending_start_loop) % 60 > 30:
                         print("⏳ TIMEOUT: Setup kadaluarsa. Reset."); pending_signal = "HOLD"
 
-            # B. Check for Pullback (Special Ops: 0.4 ATR)
+            # B. Check for Pullback (Scalper: 0.8 ATR)
             if pending_signal != "HOLD" and not pullback_ready:
                 atr = calculate_atr(rates, 14) or 0.5
-                proximity = atr * 0.4 
-                dist = abs(current_price - ema20) if ema20 else 0
+                proximity = atr * 0.8 
                 
                 last_candle = rates[-1]
                 if pending_signal == "BUY" and last_candle['low'] <= (ema20 + proximity):
                     pullback_ready = True
-                    print(f"🔄 PULLBACK: Price touched/near EMA20. Confirming...")
+                    print(f"🔄 SCALPING: Price in EMA20 zone. Confirming...")
                 elif pending_signal == "SELL" and last_candle['high'] >= (ema20 - proximity):
                     pullback_ready = True
-                    print(f"🔄 PULLBACK: Price touched/near EMA20. Confirming...")
-                
-                # --- NEW: Catch the Train (Direct Breakout) ---
-                # Jika harga lari terlalu kencang (> 2.5x ATR) tanpa pullback, paksa entry
-                if dist > (atr * 2.5):
-                    print(f"🚀 CHASE: Trend terlalu kencang (Dist:{dist:.2f}). Menghentikan penantian pullback.")
-                    pullback_ready = True # Paksa ke tahap eksekusi
+                    print(f"🔄 SCALPING: Price in EMA20 zone. Confirming...")
 
             # 6. EXECUTION GUARDS (Institutional)
             can_execute = False
@@ -358,12 +351,12 @@ def run_engine():
                 if is_valid_rejection(rates, pending_signal):
                     can_execute = True
                 else:
-                    # Breakout fallback (Special Ops: 1.0 ATR)
-                    if abs(current_price - ema20) > (atr * 1.0): 
+                    # Breakout fallback (Scalper: 0.8 ATR)
+                    if abs(current_price - ema20) > (atr * 0.8): 
                         can_execute = True
                         entry_type = "BREAKOUT"
-                    elif loop_count % 6 == 0:
-                        print(f"🔍 WAITING: {pending_signal} confirmed. Waiting for rejection/breakout...")
+                    elif loop_count % 12 == 0:
+                        print(f"🔍 WAITING: {pending_signal} Pullback zone touched. Waiting for rejection/breakout...")
 
             # Check Discipline Guards
             if can_execute:
