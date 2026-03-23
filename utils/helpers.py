@@ -4,7 +4,7 @@ import urllib.request
 import xml.etree.ElementTree as ET
 import MetaTrader5 as mt5
 import config
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 
 def calculate_ema(prices, period):
     """Menghitung Exponential Moving Average (EMA)"""
@@ -193,9 +193,89 @@ def is_market_open(symbol):
 
     return is_active
 
-def ask_ai(prompt_text):
+def get_spread(symbol):
+    """Mengambil spread saat ini (dalam points)"""
+    info = mt5.symbol_info(symbol)
+    return info.spread if info else 999
+
+def is_valid_rejection(rates, tech_signal):
+    """Memeriksa apakah candle terakhir adalah rejection valid (Wick > Body)"""
+    if len(rates) < 2:
+        return False
+    
+    last = rates[-1]
+    body = abs(last['close'] - last['open'])
+    candle_range = last['high'] - last['low']
+    
+    if candle_range == 0:
+        return False
+
+    # Hitung ATR untuk filter volume
+    atr = calculate_atr(rates, 14)
+    if not atr or candle_range < (atr * 0.5):
+        return False # Candle terlalu kecil / noisy
+
+    if tech_signal == "BUY":
+        # Pinbar Bullish: Wick bawah panjang
+        wick_bottom = min(last['open'], last['close']) - last['low']
+        return wick_bottom > body
+    elif tech_signal == "SELL":
+        # Pinbar Bearish: Wick atas panjang
+        wick_top = last['high'] - max(last['open'], last['close'])
+        return wick_top > body
+    
+    return False
+
+def get_equity_drawdown():
+    """Menghitung drawdown saat ini berdasarkan Balance vs Equity"""
+    acc = mt5.account_info()
+    if not acc:
+        return 0.0
+    if acc.balance <= 0:
+        return 0.0
+    drawdown = (acc.balance - acc.equity) / acc.balance * 100
+    return round(max(0, drawdown), 2)
+
+def is_equity_curve_healthy():
+    """Mengecek apakah performa 3 hari terakhir memburuk (sequential loss days)"""
+    now = datetime.now()
+    results = []
+    for i in range(3):
+        day_start = datetime(now.year, now.month, now.day) - timedelta(days=i)
+        day_end = day_start + timedelta(days=1)
+        
+        deals = mt5.history_deals_get(day_start, day_end)
+        if deals:
+            day_pnl = sum((d.profit + d.commission + d.swap) for d in deals if d.entry == mt5.DEAL_ENTRY_OUT)
+            results.append(day_pnl)
+        else:
+            results.append(0.0)
+            
+    # Jika 3 hari terakhir semuanya negatif
+    if len(results) == 3 and all(r < 0 for r in results):
+        return False
+    return True
+
+def can_resume_trading():
+    """Mengecek apakah kondisi pasar sudah 'tenang' untuk resume setelah drawdown"""
+    # 1. Tidak ada High Impact News
+    if is_high_impact_news_active():
+        return False
+    
+    # 2. Volatility (ATR) dalam batas wajar (tidak sedang spike gila)
+    rates = mt5.copy_rates_from_pos(config.SYMBOL, mt5.TIMEFRAME_M1, 0, 30)
+    if rates is not None:
+        atr = calculate_atr(rates, 14)
+        if atr and atr > 1.5: # Threshold arbitrer untuk XAUUSD 'gila'
+            return False
+            
+    return True
+
+def ask_ai(prompt_text, mode_override=None):
     """Fungsi AI Hybrid: Bisa Lokal (Ollama) atau Cloud (Gemini)"""
-    if config.AI_MODE == "CLOUD":
+    target_mode = mode_override if mode_override else config.AI_MODE
+    
+    if target_mode == "CLOUD":
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{config.CLOUD_MODEL}:generateContent?key={config.GEMINI_API_KEY}"
         payload = {
             "contents": [{"parts": [{"text": prompt_text}]}],

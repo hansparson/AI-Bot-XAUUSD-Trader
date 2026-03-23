@@ -8,7 +8,8 @@ from utils.helpers import (
     calculate_ema, calculate_rsi, calculate_atr, get_market_regime,
     fetch_latest_gold_news, fetch_high_impact_news, is_high_impact_news_active,
     get_mtf_trends, get_filling_mode, get_account_risk, ask_ai, close_positions_by_type,
-    is_market_open, get_market_session, get_daily_pnl
+    is_market_open, get_market_session, get_daily_pnl, get_spread, is_valid_rejection,
+    get_equity_drawdown, is_equity_curve_healthy, can_resume_trading
 )
 
 # ================= KONFIGURASI ENGINE =================
@@ -37,6 +38,16 @@ USE_SESSION_FILTER_PRO = config.USE_SESSION_FILTER_PRO
 USE_NEWS_FILTER_PRO = config.USE_NEWS_FILTER_PRO
 DYNAMIC_AI_THRESHOLD = config.DYNAMIC_AI_THRESHOLD
 
+# Institutional / Risk Manager Features
+MAX_SPREAD_POINTS = config.MAX_SPREAD_POINTS
+MAX_DAILY_TRADES = config.MAX_DAILY_TRADES
+ENSEMBLE_AI = config.ENSEMBLE_AI
+WEIGHT_TECH = config.WEIGHT_TECH
+WEIGHT_OLLAMA = config.WEIGHT_OLLAMA
+WEIGHT_GEMINI = config.WEIGHT_GEMINI
+EQUITY_DD_THRESHOLD = config.EQUITY_DD_THRESHOLD
+TRADE_COOLDOWN = config.TRADE_COOLDOWN
+
 def load_trade_history():
     history = []
     try:
@@ -50,14 +61,14 @@ def load_trade_history():
     except Exception as e: print(f"⚠️ DB Error (Load History): {e}")
     return history
 
-def save_to_history(ticket, type_str, price, result_str, reason):
+def save_to_history(ticket, type_str, price, result_str, reason, regime=None, session=None, atr=None, entry_type=None):
     try:
         conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
         time_str = datetime.now().strftime("%Y-%m-%d %H:%M")
         cursor.execute(
-            "INSERT INTO trade_history (time, ticket, type, price, result, ai_reason) VALUES (?, ?, ?, ?, ?, ?)",
-            (time_str, ticket, type_str, price, result_str, reason)
+            "INSERT INTO trade_history (time, ticket, type, price, result, ai_reason, regime, session, atr, entry_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (time_str, ticket, type_str, price, result_str, reason, regime, session, atr, entry_type)
         )
         conn.commit(); conn.close()
     except Exception as e: print(f"⚠️ DB Error (Save History): {e}")
@@ -184,8 +195,13 @@ def run_engine():
 
     print(f"🚀 [TRADING ENGINE] Mesin Intelijen {SYMBOL} Aktif (Mode: {config.AI_MODE})")
     consecutive_losses = 0
-    last_position_count = 0
+    trades_today = 0
     completed_trades = 0
+    last_trade_time = datetime.min
+    
+    # State untuk Institutional Pullback
+    pending_signal = "HOLD"
+    pullback_ready = False
     
     # AI Stats Tracking
     total_tokens = 0
@@ -193,14 +209,23 @@ def run_engine():
 
     try:
         while True:
-            # 1. DAILY DRAWDOWN GUARD
+            # 1. INSTITUTIONAL SAFETY GUARDS
+            # A. Drawdown & Daily PnL
             daily_pnl = get_daily_pnl()
             if daily_pnl <= config.MAX_DAILY_LOSS_USD:
-                print(f"🚨 KILL SWITCH AKTIF: Rugi harian ${daily_pnl} mencapai batas ${config.MAX_DAILY_LOSS_USD}. Berhenti hari ini.")
+                print(f"🚨 KILL SWITCH: Daily Loss Limit Hit (${daily_pnl}). Pausing...")
                 close_positions_by_type(SYMBOL, mt5.POSITION_TYPE_BUY)
                 close_positions_by_type(SYMBOL, mt5.POSITION_TYPE_SELL)
                 time.sleep(3600); continue
 
+            # B. Equity Curve Health (3-day sequential loss)
+            if not is_equity_curve_healthy():
+                print(f"📉 EQUITY GUARD: sequential losing days detected. Safety Pause...")
+                if not can_resume_trading():
+                    time.sleep(3600); continue
+                print("🧘 SMART RESUME: Market conditions stabilized. Resuming...")
+
+            # C. Market Open
             if not is_market_open(SYMBOL):
                 print(f"💤 PASAR TUTUP: {SYMBOL} sedang tidak aktif. Menunggu 5 menit...")
                 time.sleep(300); continue
@@ -247,83 +272,142 @@ def run_engine():
                     print(f"💰/🚨 EXIT: Profit/Loss ${total_profit:.2f} threshold hit.")
                     close_positions_by_type(SYMBOL, mt5.POSITION_TYPE_BUY)
                     close_positions_by_type(SYMBOL, mt5.POSITION_TYPE_SELL)
-                    save_to_history(0, "ALL", current_price, "EXIT_HARDCODE", f"PnL: ${total_profit}")
+                    save_to_history(0, "ALL", current_price, "EXIT_HARDCODE", f"PnL: ${total_profit}", regime, session, atr, "HARD_EXIT")
                     completed_trades += 1
                     if completed_trades % 5 == 0: update_long_term_insights()
                     time.sleep(COOLDOWN_SECONDS); continue
 
-            # 5. TECHNICAL SIGNAL TRIGGER
-            tech_signal = "HOLD"
+            # 5. INSTITUTIONAL SIGNAL TRIGGER
+            # A. Detect Crossover (The Trigger)
             if ema20 and ema50:
-                # ENTRY LOGIC: Crossover + Trend Filter (ema200) + Momentum (rsi)
-                if ema20 > ema50 and rsi < 70:
+                new_signal = "HOLD"
+                if ema20 > ema50 and rsi < 75:
                     if not PRO_MODE or (ema200 and current_price > ema200):
-                        tech_signal = "BUY"
-                elif ema20 < ema50 and rsi > 30:
+                        new_signal = "BUY"
+                elif ema20 < ema50 and rsi > 25:
                     if not PRO_MODE or (ema200 and current_price < ema200):
-                        tech_signal = "SELL"
+                        new_signal = "SELL"
+                
+                # State Machine for Pullback
+                if new_signal != "HOLD" and pending_signal == "HOLD":
+                    print(f"📡 TRIGGER: {new_signal} detected. Waiting for pullback to EMA...")
+                    pending_signal = new_signal
+                    pullback_ready = False
+                elif new_signal == "HOLD":
+                    pending_signal = "HOLD"
+                    pullback_ready = False
 
-            # 6. AI VALIDATION (Only if Tech Signal exists)
-            if tech_signal != "HOLD" and curr_pos_count < MAX_TRADES:
+            # B. Check for Pullback (Price touching EMA)
+            if pending_signal != "HOLD" and not pullback_ready:
+                # Jika BUY, cari harga Low <= EMA20
+                # Jika SELL, cari harga High >= EMA20
+                last_candle = rates[-1]
+                if pending_signal == "BUY" and last_candle['low'] <= ema20:
+                    pullback_ready = True
+                    print(f"🔄 PULLBACK: Price touched EMA20. Checking for Rejection...")
+                elif pending_signal == "SELL" and last_candle['high'] >= ema20:
+                    pullback_ready = True
+                    print(f"🔄 PULLBACK: Price touched EMA20. Checking for Rejection...")
+
+            # 6. EXECUTION GUARDS (Institutional)
+            can_execute = False
+            entry_type = "PULLBACK"
+            
+            if pending_signal != "HOLD" and pullback_ready:
+                # Check for Rejection Candle
+                if is_valid_rejection(rates, pending_signal):
+                    can_execute = True
+                else:
+                    # Alternatif: Jika breakout kencang (Institutional Breakout)
+                    atr = calculate_atr(rates, 14)
+                    if atr and abs(current_price - ema20) > (atr * 1.5):
+                        can_execute = True
+                        entry_type = "BREAKOUT"
+
+            # Check Discipline Guards
+            if can_execute:
+                # 1. Spread Filter
+                if get_spread(SYMBOL) > MAX_SPREAD_POINTS:
+                    print(f"⚠️ SPREAD GAURD: Spread {get_spread(SYMBOL)} too high."); can_execute = False
+                
+                # 2. Frequency Filter
+                if trades_today >= MAX_DAILY_TRADES:
+                    print(f"⚠️ FREQUENCY GUARD: Max daily trades ({MAX_DAILY_TRADES}) reached."); can_execute = False
+                
+                # 3. Cooldown Filter
+                if (datetime.now() - last_trade_time).total_seconds() < TRADE_COOLDOWN:
+                    print("⏳ COOLDOWN: Institutional delay between trades."); can_execute = False
+
+            # 7. ENSEMBLE AI VALIDATION
+            if can_execute and curr_pos_count < MAX_TRADES:
                 mtf = get_mtf_trends(SYMBOL)
                 history_text = "\n".join([f"{h['type']}:{h['result']}" for h in load_trade_history()[-10:]])
                 news_txt = fetch_latest_gold_news()[:150]
                 
-                # Dynamic Threshold
-                current_threshold = RATING_THRESHOLD
-                if DYNAMIC_AI_THRESHOLD:
-                    current_threshold = 0.75 if regime == "TRENDING" else 0.85
-
                 prompt = (
-                    f"PRO_FILTER_XAUUSD | Signal:{tech_signal} | Regime:{regime}\n"
-                    f"P:{current_price} | RSI:{rsi:.1f} | ATR:{atr:.2f}\n"
+                    f"PRO_FILTER_XAUUSD | Signal:{pending_signal} | Type:{entry_type}\n"
+                    f"P:{current_price} | RSI:{rsi:.1f} | ATR:{atr:.2f} | Regime:{regime}\n"
                     f"M15:{mtf.get('M15')} | H1:{mtf.get('H1')}\n"
-                    f"News:{news_txt}\nHist:{history_text}\n"
-                    f"Validate (YES/NO), Confidence (0.1-1.0), Reason."
+                    f"JSON: score(0-1), reason"
                 )
 
-                print(f"🧠 AI Validating {tech_signal} ({regime})...", end="", flush=True)
-                res_ai = ask_ai(prompt)
-                if not res_ai: print("❌ Gagal AI."); time.sleep(10); continue
-                total_requests += 1
+                print(f"🧠 ENSEMBLE AI Validating {pending_signal}...", end="", flush=True)
+                
+                # Weighted Scoring
+                score_ollama = 0.5
+                score_gemini = 0.5
+                
+                res_ollama = ask_ai(prompt, mode_override="LOCAL")
+                if res_ollama:
+                    try: score_ollama = json.loads(res_ollama.get('response', '{}')).get('score', 0.5)
+                    except: pass
+                
+                res_gemini = ask_ai(prompt, mode_override="CLOUD")
+                if res_gemini:
+                    try: score_gemini = json.loads(res_gemini.get('response', '{}')).get('score', 0.5)
+                    except: pass
+                
+                technical_score = 0.9 if entry_type == "PULLBACK" else 0.7
+                final_score = (technical_score * WEIGHT_TECH) + (score_ollama * WEIGHT_OLLAMA) + (score_gemini * WEIGHT_GEMINI)
+                
+                print(f" [Tech:{technical_score} | O:{score_ollama} | G:{score_gemini}] -> Final: {final_score:.2f}")
 
-                try:
-                    resp = json.loads(res_ai.get('response', '{}'))
-                    is_valid = resp.get("validate", "NO").upper() == "YES"
-                    confidence = resp.get("confidence", 0.0)
-                    reason = resp.get("reason", "No reason")
+                if final_score >= 0.75:
+                    # 8. ADAPTIVE POSITION SIZING
+                    dd = get_equity_drawdown()
+                    risk_mult = 1.0
+                    if dd > 10.0: risk_mult = 0.5
+                    elif dd > 5.0: risk_mult = 0.75
                     
-                    if is_valid and confidence >= current_threshold:
-                        # 7. EXECUTE TRADE (ATR-BASED RISK)
-                        point = mt5.symbol_info(SYMBOL).point
-                        price = mt5.symbol_info_tick(SYMBOL).ask if tech_signal == "BUY" else mt5.symbol_info_tick(SYMBOL).bid
-                        
-                        # ATR Multiplier SL/TP
-                        sl_dist = atr * ATR_SL_MULT if (PRO_MODE and atr) else (STOP_LOSS_PIPS * point)
-                        tp_dist = atr * ATR_TP_MULT if (PRO_MODE and atr) else (TAKE_PROFIT_PIPS * point)
-                        
-                        sl = price - sl_dist if tech_signal == "BUY" else price + sl_dist
-                        tp = price + tp_dist if tech_signal == "BUY" else price - tp_dist
-                        
-                        req = {
-                            "action": mt5.TRADE_ACTION_DEAL, "symbol": SYMBOL, "volume": LOT_SIZE,
-                            "type": mt5.ORDER_TYPE_BUY if tech_signal == "BUY" else mt5.ORDER_TYPE_SELL,
-                            "price": price, "sl": sl, "tp": tp, "deviation": 20,
-                            "magic": config.MAGIC_NUMBER, "comment": f"PRO {regime}",
-                            "type_filling": get_filling_mode(SYMBOL),
-                        }
-                        result = mt5.order_send(req)
-                        if result and result.retcode == mt5.TRADE_RETCODE_DONE:
-                            print(f"💰 PRO TRADE: {tech_signal} {LOT_SIZE} @{price:.2f} [Conf:{confidence} SL:{sl:.2f}]")
-                            save_to_history(result.order, tech_signal, price, "OPENED", reason)
-                            time.sleep(COOLDOWN_SECONDS)
-                        else:
-                            print(f"❌ Order Gagal: {result.comment if result else 'Unknown'}")
+                    final_lot = round(LOT_SIZE * risk_mult, 2)
+                    
+                    # EXECUTE
+                    price = mt5.symbol_info_tick(SYMBOL).ask if pending_signal == "BUY" else mt5.symbol_info_tick(SYMBOL).bid
+                    sl_dist = atr * ATR_SL_MULT
+                    tp_dist = atr * ATR_TP_MULT
+                    sl = price - sl_dist if pending_signal == "BUY" else price + sl_dist
+                    tp = price + tp_dist if pending_signal == "BUY" else price - tp_dist
+                    
+                    req = {
+                        "action": mt5.TRADE_ACTION_DEAL, "symbol": SYMBOL, "volume": final_lot,
+                        "type": mt5.ORDER_TYPE_BUY if pending_signal == "BUY" else mt5.ORDER_TYPE_SELL,
+                        "price": price, "sl": sl, "tp": tp, "deviation": 20,
+                        "magic": config.MAGIC_NUMBER, "comment": f"INS {entry_type}",
+                        "type_filling": get_filling_mode(SYMBOL),
+                    }
+                    result = mt5.order_send(req)
+                    if result and result.retcode == mt5.TRADE_RETCODE_DONE:
+                        print(f"💰 INSTITUTIONAL TRADE: {pending_signal} {final_lot} @{price:.2f} [Score:{final_score:.2f}]")
+                        save_to_history(result.order, pending_signal, price, "OPENED", f"Score:{final_score:.2f}", regime, session, atr, entry_type)
+                        last_trade_time = datetime.now()
+                        trades_today += 1
+                        pending_signal = "HOLD" # Reset state
                     else:
-                        print(f" ⏭️ SKIPPED: AI Reject/Low Conf ({confidence})")
-                except Exception as e: print(f"❌ Parse Error: {e}")
+                        print(f"❌ Order Gagal: {result.comment if result else 'Unknown'}")
+                else:
+                    print(f" ⏭️ SKIPPED: Low Composite Score ({final_score:.2f})")
             
-            time.sleep(10) # Loop interval dipercepat (cek sinyal setiap 10s)
+            time.sleep(10)
 
     except KeyboardInterrupt: print("Shutdown.")
     finally: mt5.shutdown()

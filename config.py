@@ -56,6 +56,17 @@ USE_SESSION_FILTER_PRO = os.getenv("USE_SESSION_FILTER_PRO", "TRUE").upper() == 
 USE_NEWS_FILTER_PRO = os.getenv("USE_NEWS_FILTER_PRO", "TRUE").upper() == "TRUE"
 DYNAMIC_AI_THRESHOLD = os.getenv("DYNAMIC_AI_THRESHOLD", "TRUE").upper() == "TRUE"
 
+# Institutional / Risk Manager Settings
+MAX_SPREAD_POINTS = int(os.getenv("MAX_SPREAD_POINTS", 300))
+MAX_DAILY_TRADES = int(os.getenv("MAX_DAILY_TRADES", 5))
+ENSEMBLE_AI = os.getenv("ENSEMBLE_AI", "TRUE").upper() == "TRUE"
+WEIGHT_TECH = float(os.getenv("WEIGHT_TECH", 0.5))
+WEIGHT_OLLAMA = float(os.getenv("WEIGHT_OLLAMA", 0.25))
+WEIGHT_GEMINI = float(os.getenv("WEIGHT_GEMINI", 0.25))
+EQUITY_DD_THRESHOLD = float(os.getenv("EQUITY_DD_THRESHOLD", 12.0))
+# Cooldown between trades (seconds)
+TRADE_COOLDOWN = int(os.getenv("TRADE_COOLDOWN", 1800)) 
+
 # Database
 DB_FILE = os.getenv("DB_FILE", "data/trading_data.db")
 
