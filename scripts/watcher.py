@@ -49,7 +49,8 @@ def monitor_market():
                                     json_str = alert_txt[start:end]
                                     data = json.loads(json_str)
                                     # Ambil value apapun yang ada (biasanya prompt minta 1 kalimat)
-                                    alert_txt = list(data.values())[0] if isinstance(data, dict) else alert_txt
+                                    val = list(data.values())[0] if isinstance(data, dict) and data.values() else alert_txt
+                                    alert_txt = str(val)
                             except: pass
 
                             # 2. Pembersihan karakter pengganggu (newline, quotes berlebih)
@@ -58,7 +59,7 @@ def monitor_market():
                             
                             # Jika masih kosong, gunakan original response (tapi strip newline)
                             if not alert_txt:
-                                alert_txt = res.get('response', '').replace("\n", " ").strip()
+                                alert_txt = str(res.get('response', '')).replace("\n", " ").strip()
 
                             print(f"🧠 AI ALERT: \"{alert_txt[:200]}\"")
                             print("-" * 50)

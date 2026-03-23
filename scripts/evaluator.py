@@ -90,10 +90,11 @@ def evaluate_performance():
                 start = insight_text.find("{")
                 end = insight_text.rfind("}") + 1
                 data = json.loads(insight_text[start:end])
-                insight_text = list(data.values())[0] if isinstance(data, dict) else insight_text
+                val = list(data.values())[0] if isinstance(data, dict) and data.values() else insight_text
+                insight_text = str(val)
         except: pass
 
-        insight_text = insight_text.replace("\n", " ").replace('"', '').replace('{', '').replace('}', '').strip()[:200]
+        insight_text = str(insight_text).replace("\n", " ").replace('"', '').replace('{', '').replace('}', '').strip()[:200]
         
         if not insight_text:
             insight_text = "Fokus pada konfirmasi H1 dan hindari sideways market."
