@@ -318,13 +318,14 @@ def run_engine():
                     pending_signal = new_signal
                     pullback_ready = False
                 elif new_signal == "HOLD" and pending_signal != "HOLD":
-                    pass 
+                    if loop_count % 6 == 0:
+                        print(f"⏳ PENDING: {pending_signal} setup still active. Monitoring pullback/rejection...")
 
             # B. Check for Pullback (Proximity EMA)
             if pending_signal != "HOLD" and not pullback_ready:
                 atr = calculate_atr(rates, 14) or 0.5
                 # Proximity: Harga masuk dalam range ATR dari EMA (Looser than touch)
-                proximity = atr * 0.5
+                proximity = atr * 0.7
                 
                 last_candle = rates[-1]
                 if pending_signal == "BUY" and last_candle['low'] <= (ema20 + proximity):
@@ -343,11 +344,13 @@ def run_engine():
                 if is_valid_rejection(rates, pending_signal):
                     can_execute = True
                 else:
-                    # Alternatif: Jika breakout kencang (Institutional Breakout)
-                    atr = calculate_atr(rates, 14)
-                    if atr and abs(current_price - ema20) > (atr * 1.5):
+                    # Alternatif: Jika breakout kencang (Ultra-Loosened fallback)
+                    atr = calculate_atr(rates, 14) or 0.5
+                    if abs(current_price - ema20) > (atr * 1.0): 
                         can_execute = True
-                        entry_type = "BREAKOUT"
+                        entry_type = "DYNAMIC_ENTER"
+                    elif loop_count % 3 == 0:
+                        print(f"🔍 WAITING: Setup {pending_signal} ready, but no rejection candle yet.")
 
             # Check Discipline Guards
             if can_execute:
