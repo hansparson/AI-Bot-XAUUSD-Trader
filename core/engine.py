@@ -340,17 +340,19 @@ def run_engine():
             entry_type = "PULLBACK"
             
             if pending_signal != "HOLD" and pullback_ready:
+                atr = calculate_atr(rates, 14) or 0.5
+                dist = abs(current_price - ema20)
+                
                 # Check for Rejection Candle
                 if is_valid_rejection(rates, pending_signal):
                     can_execute = True
                 else:
-                    # Alternatif: Jika breakout kencang (Ultra-Loosened fallback)
-                    atr = calculate_atr(rates, 14) or 0.5
-                    if abs(current_price - ema20) > (atr * 1.0): 
+                    # Dynamic Entry: Harga mulai menjauh dari EMA
+                    if dist > (atr * 0.8): 
                         can_execute = True
                         entry_type = "DYNAMIC_ENTER"
                     elif loop_count % 3 == 0:
-                        print(f"🔍 WAITING: Setup {pending_signal} ready, but no rejection candle yet.")
+                        print(f"🔍 WAITING: Setup {pending_signal} ready | Dist:{dist:.2f} | ATR_Req:{atr*0.8:.2f}")
 
             # Check Discipline Guards
             if can_execute:
@@ -407,7 +409,9 @@ def run_engine():
                 
                 print(f" [Tech:{technical_score:.1f} | O:{score_ollama:.1f} | G:{score_gemini:.1f}] -> Final: {final_score:.2f}")
 
+                # MEGA-LOOSE: Jika skor AI tinggi, kita anggap konfirmasi terpenuhi
                 if final_score >= RATING_THRESHOLD:
+                    can_execute = True # Pastikan bisa lanjut eksekusi
                     # 8. ADAPTIVE POSITION SIZING
                     dd = get_equity_drawdown()
                     risk_mult = 1.0
