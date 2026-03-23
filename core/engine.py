@@ -5,7 +5,8 @@ import sqlite3
 from datetime import datetime
 import config
 from utils.helpers import (
-    calculate_ema, calculate_rsi, fetch_latest_gold_news, fetch_high_impact_news,
+    calculate_ema, calculate_rsi, calculate_atr, get_market_regime,
+    fetch_latest_gold_news, fetch_high_impact_news, is_high_impact_news_active,
     get_mtf_trends, get_filling_mode, get_account_risk, ask_ai, close_positions_by_type,
     is_market_open, get_market_session, get_daily_pnl
 )
@@ -25,6 +26,16 @@ HARD_TP_USD = config.HARD_TP_USD
 EMERGENCY_SL_USD = config.EMERGENCY_SL_USD
 MAX_CONSEC_LOSSES = config.MAX_CONSEC_LOSSES
 DB_FILE = config.DB_FILE
+
+# PRO Features
+PRO_MODE = config.PRO_MODE
+ATR_SL_MULT = config.ATR_SL_MULT
+ATR_TP_MULT = config.ATR_TP_MULT
+ATR_BE_MULT = config.ATR_BE_MULT
+ATR_TRAIL_MULT = config.ATR_TRAIL_MULT
+USE_SESSION_FILTER_PRO = config.USE_SESSION_FILTER_PRO
+USE_NEWS_FILTER_PRO = config.USE_NEWS_FILTER_PRO
+DYNAMIC_AI_THRESHOLD = config.DYNAMIC_AI_THRESHOLD
 
 def load_trade_history():
     history = []
@@ -102,9 +113,26 @@ def manage_trailing_stop():
         return
 
     point = mt5.symbol_info(SYMBOL).point
+    
+    # Hitung ATR untuk PRO Mode
+    atr = None
+    if PRO_MODE:
+        rates_m1 = mt5.copy_rates_from_pos(SYMBOL, mt5.TIMEFRAME_M1, 0, 30)
+        if rates_m1 is not None:
+            atr = calculate_atr(rates_m1, 14)
+
     for pos in positions:
-        current_price = mt5.symbol_info_tick(SYMBOL).bid if pos.type == mt5.POSITION_TYPE_BUY else mt5.symbol_info_tick(SYMBOL).ask
+        tick = mt5.symbol_info_tick(SYMBOL)
+        current_price = tick.bid if pos.type == mt5.POSITION_TYPE_BUY else tick.ask
         
+        # Jarak Target (Pips)
+        if PRO_MODE and atr:
+            be_pips = (atr * ATR_BE_MULT) / point
+            trail_pips = (atr * ATR_TRAIL_MULT) / point
+        else:
+            be_pips = config.BREAK_EVEN_PIPS
+            trail_pips = config.TRAILING_STOP_PIPS
+
         # Hitung Profit dalam Pips
         if pos.type == mt5.POSITION_TYPE_BUY:
             profit_pips = (current_price - pos.price_open) / point
@@ -112,18 +140,17 @@ def manage_trailing_stop():
             profit_pips = (pos.price_open - current_price) / point
 
         # 1. Logic Break-Even
-        if profit_pips >= config.BREAK_EVEN_PIPS:
-            # Jika SL belum di atas/di bawah harga open (tergantung tipe)
+        if profit_pips >= be_pips:
             new_sl = 0.0
             if pos.type == mt5.POSITION_TYPE_BUY:
                 if pos.sl < pos.price_open:
-                    new_sl = pos.price_open + (10 * point) # BE + 10 pips buffer
+                    new_sl = pos.price_open + (15 * point) # BE + 15 pips
             else:
                 if pos.sl > pos.price_open or pos.sl == 0:
-                    new_sl = pos.price_open - (10 * point)
+                    new_sl = pos.price_open - (15 * point)
 
             if new_sl > 0:
-                print(f"🛡️ BREAK-EVEN: Menggeser SL ke BE (+10) untuk tiket {pos.ticket}")
+                print(f"🛡️ PRO BE: Menggeser SL ke BE (+15) untuk tiket {pos.ticket}")
                 request = {
                     "action": mt5.TRADE_ACTION_SLTP, "symbol": SYMBOL, "position": pos.ticket,
                     "sl": new_sl, "tp": pos.tp, "type_time": mt5.ORDER_TIME_GTC, "type_filling": mt5.ORDER_FILLING_IOC,
@@ -131,19 +158,19 @@ def manage_trailing_stop():
                 mt5.order_send(request)
 
         # 2. Logic Trailing Stop
-        if profit_pips >= config.TRAILING_STOP_PIPS + 100: # Mulai geser setelah profit > TS + buffer
+        if profit_pips >= trail_pips + 150: # Buffer 150 pips
             new_sl = 0.0
             if pos.type == mt5.POSITION_TYPE_BUY:
-                potential_sl = current_price - (config.TRAILING_STOP_PIPS * point)
+                potential_sl = current_price - (trail_pips * point)
                 if potential_sl > pos.sl:
                     new_sl = potential_sl
             else:
-                potential_sl = current_price + (config.TRAILING_STOP_PIPS * point)
+                potential_sl = current_price + (trail_pips * point)
                 if potential_sl < pos.sl or pos.sl == 0:
                     new_sl = potential_sl
 
             if new_sl > 0:
-                print(f"📈 TRAILING: Menggeser SL ke {new_sl} untuk tiket {pos.ticket}")
+                print(f"📈 PRO TRAILING: Menggeser SL ke {new_sl} untuk {pos.ticket}")
                 request = {
                     "action": mt5.TRADE_ACTION_SLTP, "symbol": SYMBOL, "position": pos.ticket,
                     "sl": new_sl, "tp": pos.tp, "type_time": mt5.ORDER_TIME_GTC, "type_filling": mt5.ORDER_FILLING_IOC,
@@ -170,135 +197,133 @@ def run_engine():
             daily_pnl = get_daily_pnl()
             if daily_pnl <= config.MAX_DAILY_LOSS_USD:
                 print(f"🚨 KILL SWITCH AKTIF: Rugi harian ${daily_pnl} mencapai batas ${config.MAX_DAILY_LOSS_USD}. Berhenti hari ini.")
-                # Tutup semua posisi jika ada
                 close_positions_by_type(SYMBOL, mt5.POSITION_TYPE_BUY)
                 close_positions_by_type(SYMBOL, mt5.POSITION_TYPE_SELL)
-                time.sleep(3600); continue # Tunggu 1 jam sebelum cek lagi
+                time.sleep(3600); continue
 
             if not is_market_open(SYMBOL):
                 print(f"💤 PASAR TUTUP: {SYMBOL} sedang tidak aktif. Menunggu 5 menit...")
                 time.sleep(300); continue
 
-            rates = mt5.copy_rates_from_pos(SYMBOL, TIMEFRAME, 0, 50)
-            if rates is None or len(rates) < 20:
+            # 2. PRO FILTERS (Session & News)
+            if PRO_MODE:
+                session = get_market_session()
+                is_prime_time = "LONDON" in session or "NEW YORK" in session
+                if USE_SESSION_FILTER_PRO and not is_prime_time:
+                    print(f"😴 LOW VOLATILITY: Sesi {session}. Menunggu London/NY (UTC 08:00-21:00)...")
+                    time.sleep(60); continue
+                
+                if USE_NEWS_FILTER_PRO and is_high_impact_news_active():
+                    print("⚠️ NEWS GUARD: Berita High Impact terdeteksi. Menunggu 5 menit...")
+                    time.sleep(300); continue
+
+            # 3. TECHNICAL INDICATORS
+            rates = mt5.copy_rates_from_pos(SYMBOL, TIMEFRAME, 0, 100)
+            if rates is None or len(rates) < 50:
                 print("⏳ Sinkronisasi data..."); time.sleep(5); continue
 
             prices = [r['close'] for r in rates]
             current_price = prices[-1]
-            ema9, ema21, rsi = calculate_ema(prices, 9), calculate_ema(prices, 21), calculate_rsi(prices, 14)
-            trend = "UP" if ema9 and ema21 and ema9 > ema21 else "DOWN"
+            ema20 = calculate_ema(prices, 20)
+            ema50 = calculate_ema(prices, 50)
+            ema200 = calculate_ema(prices, 200)
+            rsi = calculate_rsi(prices, 14)
+            atr = calculate_atr(rates, 14)
+            regime = get_market_regime(prices)
+            
             risk = get_account_risk(MIN_MARGIN_LEVEL)
             if not risk["can_trade"]:
                 print(f"⚠️ RISK GUARD: Margin Level {risk['margin_level']}% RENDAH!"); time.sleep(30); continue
 
             positions = mt5.positions_get(symbol=SYMBOL)
             total_profit = sum(pos.profit for pos in positions) if positions else 0.0
+            curr_pos_count = len(positions) if positions else 0
             
-            # 2. MANAGE TRAILING STOP
+            # 4. MANAGE OPEN POSITIONS
             if positions:
                 manage_trailing_stop()
-            # Tracking Loss Berturut-turut
-            curr_pos_count = len(positions) if positions else 0
-            if last_position_count > 0 and curr_pos_count == 0:
-                if total_profit < 0: consecutive_losses += 1
-                else: consecutive_losses = 0
-            last_position_count = curr_pos_count
+                # Proteksi Hardcoded (TP/SL USD)
+                if total_profit >= HARD_TP_USD or total_profit <= EMERGENCY_SL_USD:
+                    print(f"💰/🚨 EXIT: Profit/Loss ${total_profit:.2f} threshold hit.")
+                    close_positions_by_type(SYMBOL, mt5.POSITION_TYPE_BUY)
+                    close_positions_by_type(SYMBOL, mt5.POSITION_TYPE_SELL)
+                    save_to_history(0, "ALL", current_price, "EXIT_HARDCODE", f"PnL: ${total_profit}")
+                    completed_trades += 1
+                    if completed_trades % 5 == 0: update_long_term_insights()
+                    time.sleep(COOLDOWN_SECONDS); continue
 
-            if consecutive_losses >= MAX_CONSEC_LOSSES and curr_pos_count == 0:
-                print(f"🚨 PAUSE: {consecutive_losses} loss berturut-turut!"); time.sleep(COOLDOWN_AFTER_LOSS * 2)
-                consecutive_losses = 0; continue
+            # 5. TECHNICAL SIGNAL TRIGGER
+            tech_signal = "HOLD"
+            if ema20 and ema50:
+                # ENTRY LOGIC: Crossover + Trend Filter (ema200) + Momentum (rsi)
+                if ema20 > ema50 and rsi < 70:
+                    if not PRO_MODE or (ema200 and current_price > ema200):
+                        tech_signal = "BUY"
+                elif ema20 < ema50 and rsi > 30:
+                    if not PRO_MODE or (ema200 and current_price < ema200):
+                        tech_signal = "SELL"
 
-            # Proteksi Hardcoded
-            if total_profit >= HARD_TP_USD or total_profit <= EMERGENCY_SL_USD:
-                print(f"💰/🚨 EXIT: Profit/Loss ${total_profit:.2f} treshold hit.")
-                close_positions_by_type(SYMBOL, mt5.POSITION_TYPE_BUY)
-                close_positions_by_type(SYMBOL, mt5.POSITION_TYPE_SELL)
-                mode = "CLOSED_BY_HARDCODE" if total_profit >= HARD_TP_USD else "CLOSED_BY_EMERGENCY_SL"
-                save_to_history(0, "ALL", current_price, mode, "Target/Stop hit.")
-                completed_trades += 1
-                if completed_trades % 10 == 0: update_long_term_insights()
-                time.sleep(COOLDOWN_SECONDS); continue
+            # 6. AI VALIDATION (Only if Tech Signal exists)
+            if tech_signal != "HOLD" and curr_pos_count < MAX_TRADES:
+                mtf = get_mtf_trends(SYMBOL)
+                history_text = "\n".join([f"{h['type']}:{h['result']}" for h in load_trade_history()[-10:]])
+                news_txt = fetch_latest_gold_news()[:150]
+                
+                # Dynamic Threshold
+                current_threshold = RATING_THRESHOLD
+                if DYNAMIC_AI_THRESHOLD:
+                    current_threshold = 0.75 if regime == "TRENDING" else 0.85
 
-            # RAKIT PROMPT (Optimized for Tokens)
-            mtf = get_mtf_trends(SYMBOL)
-            session = get_market_session()
-            history_text = "\n".join([f"{h['type']}:{h['result']}" for h in load_trade_history()[-15:]])
-            news_txt = fetch_latest_gold_news()[:200]
-            high_txt = fetch_high_impact_news()[:150]
-            
-            prompt = (
-                f"GOLD_{SYMBOL}_M1 | Session:{session}\n"
-                f"P:{current_price} | R:{rsi} | T:{trend} | DailyPnL:${daily_pnl}\n"
-                f"M15:{mtf.get('M15')} | H1:{mtf.get('H1')}\n"
-                f"News:{news_txt}\n{high_txt}\n"
-                f"Hist:{history_text}\n"
-                f"Ref:{load_long_term_insights()[:200]}\n"
-                f"Output JSON: decision(BUY/SELL/HOLD/CLOSE), confidence(0-1), reason, sl_pips, tp_pips\n"
-                f"(Baseline: SL={STOP_LOSS_PIPS}, TP={TAKE_PROFIT_PIPS} pips. 100 pips = $1.00 Gold movement)"
-            )
+                prompt = (
+                    f"PRO_FILTER_XAUUSD | Signal:{tech_signal} | Regime:{regime}\n"
+                    f"P:{current_price} | RSI:{rsi:.1f} | ATR:{atr:.2f}\n"
+                    f"M15:{mtf.get('M15')} | H1:{mtf.get('H1')}\n"
+                    f"News:{news_txt}\nHist:{history_text}\n"
+                    f"Validate (YES/NO), Confidence (0.1-1.0), Reason."
+                )
 
-            print(f"🧠 Meminta Analisa AI ({config.AI_MODE})...", end="", flush=True)
-            res_ai = ask_ai(prompt)
-            if not res_ai: print("❌ Gagal AI."); time.sleep(10); continue
-            
-            # Update Stats
-            total_requests += 1
-            usage = res_ai.get("usage", {})
-            last_tokens = usage.get("totalTokenCount", 0)
-            total_tokens += last_tokens
-            
-            # Stats Display
-            if config.AI_MODE == "CLOUD":
-                remaining_rpd = max(0, 1500 - total_requests)
-                stats_msg = f" [Req:{total_requests} (Sisa:~{remaining_rpd}) | Tokens:{total_tokens}]"
-            else:
-                stats_msg = f" [Total:{total_requests}]"
+                print(f"🧠 AI Validating {tech_signal} ({regime})...", end="", flush=True)
+                res_ai = ask_ai(prompt)
+                if not res_ai: print("❌ Gagal AI."); time.sleep(10); continue
+                total_requests += 1
 
-            try:
-                resp = json.loads(res_ai.get('response', '{}'))
-                decision = resp.get("decision", "HOLD").upper()
-                confidence = resp.get("confidence", 0.0)
-                reason = resp.get("reason", "No reason")
-                print(f" ✅ AI: {decision} ({confidence}){stats_msg}")
-
-                if decision == "CLOSE":
-                    if not (total_profit < 0 and total_profit > EMERGENCY_SL_USD):
-                        close_positions_by_type(SYMBOL, mt5.POSITION_TYPE_BUY)
-                        close_positions_by_type(SYMBOL, mt5.POSITION_TYPE_SELL)
-                        save_to_history(0, "ALL", current_price, "CLOSED_BY_AI", reason)
-
-                elif decision in ["BUY", "SELL"] and confidence >= RATING_THRESHOLD:
-                    hard_blocked = (decision == "BUY" and rsi >= 85) or (decision == "SELL" and rsi <= 15)
-                    if not hard_blocked and curr_pos_count < MAX_TRADES:
-                        # Tutup Lawan
-                        opposing = mt5.POSITION_TYPE_SELL if decision == "BUY" else mt5.POSITION_TYPE_BUY
-                        close_positions_by_type(SYMBOL, opposing)
-                        
-                        price = mt5.symbol_info_tick(SYMBOL).ask if decision == "BUY" else mt5.symbol_info_tick(SYMBOL).bid
+                try:
+                    resp = json.loads(res_ai.get('response', '{}'))
+                    is_valid = resp.get("validate", "NO").upper() == "YES"
+                    confidence = resp.get("confidence", 0.0)
+                    reason = resp.get("reason", "No reason")
+                    
+                    if is_valid and confidence >= current_threshold:
+                        # 7. EXECUTE TRADE (ATR-BASED RISK)
                         point = mt5.symbol_info(SYMBOL).point
-                        # Gunakan default jika AI tidak memberikan respons valid
-                        raw_sl = resp.get("sl_pips")
-                        raw_tp = resp.get("tp_pips")
-                        ai_sl = max(100, min(int(raw_sl if raw_sl else STOP_LOSS_PIPS), 3000))
-                        ai_tp = max(100, min(int(raw_tp if raw_tp else TAKE_PROFIT_PIPS), 6000))
+                        price = mt5.symbol_info_tick(SYMBOL).ask if tech_signal == "BUY" else mt5.symbol_info_tick(SYMBOL).bid
                         
-                        sl = price - ai_sl * point if decision == "BUY" else price + ai_sl * point
-                        tp = price + ai_tp * point if decision == "BUY" else price - ai_tp * point
+                        # ATR Multiplier SL/TP
+                        sl_dist = atr * ATR_SL_MULT if (PRO_MODE and atr) else (STOP_LOSS_PIPS * point)
+                        tp_dist = atr * ATR_TP_MULT if (PRO_MODE and atr) else (TAKE_PROFIT_PIPS * point)
+                        
+                        sl = price - sl_dist if tech_signal == "BUY" else price + sl_dist
+                        tp = price + tp_dist if tech_signal == "BUY" else price - tp_dist
                         
                         req = {
                             "action": mt5.TRADE_ACTION_DEAL, "symbol": SYMBOL, "volume": LOT_SIZE,
-                            "type": mt5.ORDER_TYPE_BUY if decision == "BUY" else mt5.ORDER_TYPE_SELL,
+                            "type": mt5.ORDER_TYPE_BUY if tech_signal == "BUY" else mt5.ORDER_TYPE_SELL,
                             "price": price, "sl": sl, "tp": tp, "deviation": 20,
-                            "magic": config.MAGIC_NUMBER, "comment": "AI Hybrid V2",
+                            "magic": config.MAGIC_NUMBER, "comment": f"PRO {regime}",
                             "type_filling": get_filling_mode(SYMBOL),
                         }
                         result = mt5.order_send(req)
-                        if result.retcode == mt5.TRADE_RETCODE_DONE:
-                            print(f"💰 TRADE BERHASIL: {decision} {LOT_SIZE} {SYMBOL} @{price:.2f} (SL:{sl:.2f} TP:{tp:.2f})")
-                            save_to_history(result.order, decision, price, "OPENED", reason)
-                            consecutive_losses = 0
-            except Exception as e: print(f"❌ Parse Error: {e}")
-            time.sleep(COOLDOWN_SECONDS)
+                        if result and result.retcode == mt5.TRADE_RETCODE_DONE:
+                            print(f"💰 PRO TRADE: {tech_signal} {LOT_SIZE} @{price:.2f} [Conf:{confidence} SL:{sl:.2f}]")
+                            save_to_history(result.order, tech_signal, price, "OPENED", reason)
+                            time.sleep(COOLDOWN_SECONDS)
+                        else:
+                            print(f"❌ Order Gagal: {result.comment if result else 'Unknown'}")
+                    else:
+                        print(f" ⏭️ SKIPPED: AI Reject/Low Conf ({confidence})")
+                except Exception as e: print(f"❌ Parse Error: {e}")
+            
+            time.sleep(10) # Loop interval dipercepat (cek sinyal setiap 10s)
 
     except KeyboardInterrupt: print("Shutdown.")
     finally: mt5.shutdown()

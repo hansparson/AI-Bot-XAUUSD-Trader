@@ -43,6 +43,19 @@ HARD_TP_USD = float(os.getenv("HARD_TP_USD", 15.0))
 EMERGENCY_SL_USD = float(os.getenv("EMERGENCY_SL_USD", -8.0))
 MAX_CONSEC_LOSSES = int(os.getenv("MAX_CONSEC_LOSSES", 4))
 
+# PRO Strategy Settings
+PRO_MODE = os.getenv("PRO_MODE", "TRUE").upper() == "TRUE"
+ATR_PERIOD = int(os.getenv("ATR_PERIOD", 14))
+ATR_SL_MULT = float(os.getenv("ATR_SL_MULT", 1.5))
+ATR_TP_MULT = float(os.getenv("ATR_TP_MULT", 2.5))
+ATR_BE_MULT = float(os.getenv("ATR_BE_MULT", 1.0))
+ATR_TRAIL_MULT = float(os.getenv("ATR_TRAIL_MULT", 1.5))
+
+# Session & News Filter
+USE_SESSION_FILTER_PRO = os.getenv("USE_SESSION_FILTER_PRO", "TRUE").upper() == "TRUE"
+USE_NEWS_FILTER_PRO = os.getenv("USE_NEWS_FILTER_PRO", "TRUE").upper() == "TRUE"
+DYNAMIC_AI_THRESHOLD = os.getenv("DYNAMIC_AI_THRESHOLD", "TRUE").upper() == "TRUE"
+
 # Database
 DB_FILE = os.getenv("DB_FILE", "data/trading_data.db")
 

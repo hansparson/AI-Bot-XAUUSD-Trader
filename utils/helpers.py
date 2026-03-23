@@ -44,6 +44,42 @@ def calculate_rsi(prices, period=14):
     rs = avg_gain / avg_loss
     rsi = 100 - (100 / (1 + rs))
     return round(rsi, 2)
+def calculate_atr(rates, period=14):
+    """Menghitung Average True Range (ATR)"""
+    if len(rates) < period + 1:
+        return None
+    tr_list = []
+    for i in range(1, len(rates)):
+        high = rates[i]['high']
+        low = rates[i]['low']
+        prev_close = rates[i-1]['close']
+        tr = max(high - low, abs(high - prev_close), abs(low - prev_close))
+        tr_list.append(tr)
+    
+    # Simple Moving Average untuk ATR awal
+    atr = sum(tr_list[:period]) / period
+    for i in range(period, len(tr_list)):
+        atr = (atr * (period - 1) + tr_list[i]) / period
+    return round(atr, 5)
+
+def get_market_regime(prices):
+    """Mendeteksi apakah pasar sedang Trending atau Sideways"""
+    if len(prices) < 50:
+        return "UNKNOWN"
+    
+    ema20 = calculate_ema(prices, 20)
+    ema50 = calculate_ema(prices, 50)
+    
+    # Hitung ADX sederhana atau deviasi harga
+    # Kita gunakan jarak antara EMA 20 dan 50 sebagai indikator tren
+    diff = abs(ema20 - ema50)
+    avg_price = sum(prices[-10:]) / 10
+    
+    # Jika selisih EMA > 0.1% dari harga, anggap trending
+    if diff > (avg_price * 0.001):
+        return "TRENDING"
+    else:
+        return "SIDEWAYS"
 
 def fetch_latest_gold_news():
     """Mengambil berita fundamental emas terbaru"""
@@ -83,20 +119,29 @@ def fetch_high_impact_news():
     except:
         return "Kalender ekonomi tidak tersedia."
 
+def is_high_impact_news_active():
+    """Mengecek apakah ada berita high impact yang aktif saat ini"""
+    news = fetch_high_impact_news()
+    return "⚠️ HIGH IMPACT" in news
+
 def get_mtf_trends(symbol):
     """Mengambil tren dari timeframe lebih tinggi (M15 dan H1)"""
     result = {}
     for tf_name, tf_const in [("M15", mt5.TIMEFRAME_M15), ("H1", mt5.TIMEFRAME_H1)]:
         try:
-            rates = mt5.copy_rates_from_pos(symbol, tf_const, 0, 30)
-            if rates is None or len(rates) < 22:
+            rates = mt5.copy_rates_from_pos(symbol, tf_const, 0, 100)
+            if rates is None or len(rates) < 50:
                 result[tf_name] = "N/A"
                 continue
             prices = [r['close'] for r in rates]
-            ema9 = calculate_ema(prices, 9)
-            ema21 = calculate_ema(prices, 21)
-            if ema9 and ema21:
-                result[tf_name] = "BULLISH" if ema9 > ema21 else "BEARISH"
+            ema50 = calculate_ema(prices, 50)
+            ema200 = calculate_ema(prices, 200) # Jika data cukup
+            
+            last_price = prices[-1]
+            if ema50 and last_price > ema50:
+                result[tf_name] = "BULLISH"
+            elif ema50 and last_price < ema50:
+                result[tf_name] = "BEARISH"
             else:
                 result[tf_name] = "N/A"
         except:
