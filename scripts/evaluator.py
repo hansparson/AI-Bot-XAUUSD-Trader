@@ -5,6 +5,11 @@ import sys
 import json
 from datetime import datetime, timedelta
 
+# Fix Windows Unicode Output
+if sys.platform == "win32":
+    import io
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+
 # Tambahkan project root ke sys.path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config
@@ -77,10 +82,22 @@ def evaluate_performance():
     print("🧠 AI sedang merangkum pelajaran hari ini...")
     res = ask_ai(prompt)
     if res:
-        insight_text = res.get('response', 'Konsisten dengan strategi EMA.').strip()
-        # Bersihkan insight
-        insight_text = insight_text.replace("\n", " ")[:200]
+        insight_text = res.get('response', '').strip()
         
+        # Bersihkan jika AI memberikan format JSON
+        try:
+            if "{" in insight_text:
+                start = insight_text.find("{")
+                end = insight_text.rfind("}") + 1
+                data = json.loads(insight_text[start:end])
+                insight_text = list(data.values())[0] if isinstance(data, dict) else insight_text
+        except: pass
+
+        insight_text = insight_text.replace("\n", " ").replace('"', '').replace('{', '').replace('}', '').strip()[:200]
+        
+        if not insight_text:
+            insight_text = "Fokus pada konfirmasi H1 dan hindari sideways market."
+
         # Simpan ke DB
         win_rate = f"{(wins/len(history_deals)*100):.1f}%" if history_deals else "0%"
         cursor.execute(
