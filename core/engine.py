@@ -298,46 +298,44 @@ def run_engine():
                 new_signal = "HOLD"
                 technical_score = 0.5
                 
-                if ema20 > ema50 and rsi < 80:
-                    new_signal = "BUY"
-                    # Soft Filter EMA200
+                if ema20 > ema50 and rsi < 75:
+                    # Strict Filter EMA200 for BUY
                     if not PRO_MODE or (ema200 and current_price > ema200):
+                        new_signal = "BUY"
                         technical_score = 0.9
                     else:
-                        technical_score = 0.6 # Aggressive: allow even below EMA200 with penalty
-                elif ema20 < ema50 and rsi > 20:
-                    new_signal = "SELL"
-                    # Soft Filter EMA200
+                        if loop_count % 6 == 0: print(f"⏳ SIGNAL: BUY potential, but blocked by EMA200 safety.")
+                elif ema20 < ema50 and rsi > 25:
+                    # Strict Filter EMA200 for SELL
                     if not PRO_MODE or (ema200 and current_price < ema200):
+                        new_signal = "SELL"
                         technical_score = 0.9
                     else:
-                        technical_score = 0.6 # Aggressive
+                        if loop_count % 6 == 0: print(f"⏳ SIGNAL: SELL potential, but blocked by EMA200 safety.")
                 
                 if new_signal == "HOLD" and loop_count % 12 == 0:
                     print(f"👀 MONITORING: Price:{current_price:.2f} | EMA20:{ema20:.2f} | EMA50:{ema50:.2f} | Trend:{'UP' if ema20 > ema50 else 'DOWN'}")
                 
                 # State Machine for Pullback
                 if new_signal != "HOLD" and pending_signal == "HOLD":
-                    print(f"📡 TRIGGER: {new_signal} detected. Waiting for pullback (Proximity)...")
+                    print(f"📡 TRIGGER: {new_signal} detected. Waiting for PULLBACK (Strict)...")
                     pending_signal = new_signal
                     pullback_ready = False
                 elif new_signal == "HOLD" and pending_signal != "HOLD":
-                    if loop_count % 6 == 0:
-                        print(f"⏳ PENDING: {pending_signal} setup still active. Monitoring pullback/rejection...")
+                    pass 
 
-            # B. Check for Pullback (Proximity EMA)
+            # B. Check for Pullback (Strict EMA Touch)
             if pending_signal != "HOLD" and not pullback_ready:
                 atr = calculate_atr(rates, 14) or 0.5
-                # Proximity: Harga masuk dalam range ATR dari EMA (Looser than touch)
-                proximity = atr * 0.7
+                proximity = atr * 0.2 # Back to very strict 0.2
                 
                 last_candle = rates[-1]
                 if pending_signal == "BUY" and last_candle['low'] <= (ema20 + proximity):
                     pullback_ready = True
-                    print(f"🔄 PROXIMITY: Price entered EMA20 zone. Confirming...")
+                    print(f"🔄 PULLBACK: Price touched/near EMA20. Confirming...")
                 elif pending_signal == "SELL" and last_candle['high'] >= (ema20 - proximity):
                     pullback_ready = True
-                    print(f"🔄 PROXIMITY: Price entered EMA20 zone. Confirming...")
+                    print(f"🔄 PULLBACK: Price touched/near EMA20. Confirming...")
 
             # 6. EXECUTION GUARDS (Institutional)
             can_execute = False
@@ -345,18 +343,17 @@ def run_engine():
             
             if pending_signal != "HOLD" and pullback_ready:
                 atr = calculate_atr(rates, 14) or 0.5
-                dist = abs(current_price - ema20)
                 
                 # Check for Rejection Candle
                 if is_valid_rejection(rates, pending_signal):
                     can_execute = True
                 else:
-                    # Dynamic Entry: Harga mulai menjauh dari EMA
-                    if dist > (atr * 0.8): 
+                    # Breakout fallback (lebih ketat 1.5 ATR)
+                    if abs(current_price - ema20) > (atr * 1.5): 
                         can_execute = True
-                        entry_type = "DYNAMIC_ENTER"
-                    elif loop_count % 3 == 0:
-                        print(f"🔍 WAITING: Setup {pending_signal} ready | Dist:{dist:.2f} | ATR_Req:{atr*0.8:.2f}")
+                        entry_type = "BREAKOUT"
+                    elif loop_count % 12 == 0:
+                        print(f"🔍 WAITING: {pending_signal} setup ready. Waiting for rejection candle...")
 
             # Check Discipline Guards
             if can_execute:
@@ -417,9 +414,8 @@ def run_engine():
                 
                 print(f" [Tech:{technical_score:.1f} | O:{score_ollama:.1f}] -> Final: {final_score:.2f}")
 
-                # MEGA-LOOSE: Jika skor AI tinggi, kita anggap konfirmasi terpenuhi
                 if final_score >= RATING_THRESHOLD:
-                    can_execute = True # Pastikan bisa lanjut eksekusi
+                    can_execute = True 
                     # 8. ADAPTIVE POSITION SIZING
                     dd = get_equity_drawdown()
                     risk_mult = 1.0

@@ -210,10 +210,10 @@ def is_valid_rejection(rates, tech_signal):
     if candle_range == 0:
         return False
 
-    # Hitung ATR untuk filter volume (Dihapus untuk Aggressive Mode)
-    # atr = calculate_atr(rates, 14)
-    # if not atr or candle_range < (atr * 0.5):
-    #     return False 
+    # Hitung ATR untuk filter volume (Dianjurkan untuk Kedisiplinan)
+    atr = calculate_atr(rates, 14)
+    if not atr or candle_range < (atr * 0.4): # Minimal 40% dari ATR
+        return False 
 
     if tech_signal == "BUY":
         # Pinbar Bullish: Wick bawah panjang
