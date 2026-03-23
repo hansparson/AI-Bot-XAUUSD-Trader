@@ -203,12 +203,17 @@ def run_engine():
     pending_signal = "HOLD"
     pullback_ready = False
     
-    # AI Stats Tracking
-    total_tokens = 0
-    total_requests = 0
-
+    # Heartbeat counter
+    loop_count = 0
+    
     try:
         while True:
+            # 0. HEARTBEAT (Status monitoring)
+            loop_count += 1
+            if loop_count >= 60: # Sinyal status setiap ~10 menit (60 * 10s)
+                print(f"💓 HEARTBEAT | Pnl: ${daily_pnl} | Regime: {regime} | Pos: {curr_pos_count} | Spr: {get_spread(SYMBOL)}")
+                loop_count = 0
+
             # 1. INSTITUTIONAL SAFETY GUARDS
             # A. Drawdown & Daily PnL
             daily_pnl = get_daily_pnl()
@@ -366,9 +371,19 @@ def run_engine():
                 if res_gemini:
                     try: score_gemini = json.loads(res_gemini.get('response', '{}')).get('score', 0.5)
                     except: pass
+                else:
+                    # FALLBACK LOGIC: Gemini Down / Quota Exceeded
+                    print(" (Cloud Down! Switching to Local-Heavy weight) ", end="")
+                    # Redistribusikan bobot Gemini ke Tech & Ollama
+                    score_gemini = 0.5 # Default middle ground 
+                    # Kita ganti formula di bawah untuk mengabaikan bobot Gemini
                 
-                technical_score = 0.9 if entry_type == "PULLBACK" else 0.7
-                final_score = (technical_score * WEIGHT_TECH) + (score_ollama * WEIGHT_OLLAMA) + (score_gemini * WEIGHT_GEMINI)
+                if not res_gemini:
+                    # Formula Fallback (Tech: 0.6, Ollama: 0.4)
+                    final_score = (technical_score * 0.6) + (score_ollama * 0.4)
+                else:
+                    # Formula Normal
+                    final_score = (technical_score * WEIGHT_TECH) + (score_ollama * WEIGHT_OLLAMA) + (score_gemini * WEIGHT_GEMINI)
                 
                 print(f" [Tech:{technical_score} | O:{score_ollama} | G:{score_gemini}] -> Final: {final_score:.2f}")
 
