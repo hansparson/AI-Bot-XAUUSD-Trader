@@ -298,36 +298,39 @@ def run_engine():
                 new_signal = "HOLD"
                 technical_score = 0.5
                 
-                if ema20 > ema50 and rsi < 75:
-                    # Strict Filter EMA200 for BUY
+                if ema20 > ema50 and rsi < 78:
+                    new_signal = "BUY"
+                    # Soft Filter EMA200 (Special Ops: allow with penalty)
                     if not PRO_MODE or (ema200 and current_price > ema200):
-                        new_signal = "BUY"
                         technical_score = 0.9
                     else:
-                        if loop_count % 6 == 0: print(f"⏳ SIGNAL: BUY potential, but blocked by EMA200 safety.")
-                elif ema20 < ema50 and rsi > 25:
-                    # Strict Filter EMA200 for SELL
+                        technical_score = 0.65 # Penalty if against long-term trend
+                elif ema20 < ema50 and rsi > 22:
+                    new_signal = "SELL"
+                    # Soft Filter EMA200 (Special Ops: allow with penalty)
                     if not PRO_MODE or (ema200 and current_price < ema200):
-                        new_signal = "SELL"
                         technical_score = 0.9
                     else:
-                        if loop_count % 6 == 0: print(f"⏳ SIGNAL: SELL potential, but blocked by EMA200 safety.")
+                        technical_score = 0.65 
                 
                 if new_signal == "HOLD" and loop_count % 12 == 0:
                     print(f"👀 MONITORING: Price:{current_price:.2f} | EMA20:{ema20:.2f} | EMA50:{ema50:.2f} | Trend:{'UP' if ema20 > ema50 else 'DOWN'}")
                 
                 # State Machine for Pullback
                 if new_signal != "HOLD" and pending_signal == "HOLD":
-                    print(f"📡 TRIGGER: {new_signal} detected. Waiting for PULLBACK (Strict)...")
+                    print(f"📡 TRIGGER: {new_signal} detected. Waiting for entry zone...")
                     pending_signal = new_signal
                     pullback_ready = False
+                    pending_start_loop = loop_count
                 elif new_signal == "HOLD" and pending_signal != "HOLD":
-                    pass 
+                    # Signal Timeout: Reset setelah 30 loop (~5 menit) jika tidak terpancing
+                    if (loop_count - pending_start_loop) % 60 > 30:
+                        print("⏳ TIMEOUT: Setup kadaluarsa. Reset."); pending_signal = "HOLD"
 
-            # B. Check for Pullback (Strict EMA Touch)
+            # B. Check for Pullback (Special Ops: 0.4 ATR)
             if pending_signal != "HOLD" and not pullback_ready:
                 atr = calculate_atr(rates, 14) or 0.5
-                proximity = atr * 0.2 # Back to very strict 0.2
+                proximity = atr * 0.4 
                 
                 last_candle = rates[-1]
                 if pending_signal == "BUY" and last_candle['low'] <= (ema20 + proximity):
@@ -348,12 +351,12 @@ def run_engine():
                 if is_valid_rejection(rates, pending_signal):
                     can_execute = True
                 else:
-                    # Breakout fallback (lebih ketat 1.5 ATR)
-                    if abs(current_price - ema20) > (atr * 1.5): 
+                    # Breakout fallback (Special Ops: 1.0 ATR)
+                    if abs(current_price - ema20) > (atr * 1.0): 
                         can_execute = True
                         entry_type = "BREAKOUT"
-                    elif loop_count % 12 == 0:
-                        print(f"🔍 WAITING: {pending_signal} setup ready. Waiting for rejection candle...")
+                    elif loop_count % 6 == 0:
+                        print(f"🔍 WAITING: {pending_signal} confirmed. Waiting for rejection/breakout...")
 
             # Check Discipline Guards
             if can_execute:

@@ -210,9 +210,9 @@ def is_valid_rejection(rates, tech_signal):
     if candle_range == 0:
         return False
 
-    # Hitung ATR untuk filter volume (Dianjurkan untuk Kedisiplinan)
+    # Hitung ATR untuk filter volume (Special Ops: 20% ATR)
     atr = calculate_atr(rates, 14)
-    if not atr or candle_range < (atr * 0.4): # Minimal 40% dari ATR
+    if not atr or candle_range < (atr * 0.2): 
         return False 
 
     if tech_signal == "BUY":
